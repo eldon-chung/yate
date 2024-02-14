@@ -24,27 +24,28 @@ struct State {
 
         // some chars to insert first
         // insert newline
-        if (nc_input.id == 127) {
+        if (nc_input.id == NCKEY_ENTER) {
             text_buffer.insert_newline();
             return;
         }
 
         // backspace
-        if (nc_input.id == 8) {
+        if (nc_input.id == NCKEY_BACKSPACE) {
             text_buffer.insert_backspace();
             return;
         }
 
         // delete
-        if (nc_input.id == 127) {
+        if (nc_input.id == NCKEY_DEL) {
             text_buffer.insert_delete();
             return;
         }
 
         // handle unmodified inputs
         // and need to handle delete separately
-        if (nc_input.id == 9 || (nc_input.id <= 255 && nc_input.id >= 32) ||
-            nc_input.id != 127) {
+        if (nc_input.id == NCKEY_TAB ||
+            (nc_input.id <= 255 && nc_input.id >= 32) ||
+            nc_input.id != NCKEY_DEL) {
             text_buffer.insert_char((char)nc_input.id);
             return;
         }
