@@ -40,7 +40,16 @@ class TextBuffer {
         cursor.col = 0;
     }
 
-    void insert_backspace() {}
+    void insert_backspace() {
+        if (cursor.col > 0) {
+            buffer.at(cursor.line).erase(--cursor.col, 1);
+
+        } else if (cursor.line > 0) {
+            cursor.col = buffer.at(--cursor.line).length();
+            buffer.at(cursor.line).append(buffer.at(cursor.line + 1));
+            buffer.erase(buffer.begin() + (long)cursor.line + 1);
+        }
+    }
 
     void insert_delete() {}
 
