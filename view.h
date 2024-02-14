@@ -36,15 +36,15 @@ class TextPlane {
         assert(text_cursor.col < col_count);
 
         struct nccell cursor_cell_copy;
-        ncplane_at_yx_cell(plane_ptr, text_cursor.line - starting_row,
-                           text_cursor.col, &cursor_cell_copy);
+        ncplane_at_yx_cell(plane_ptr, (int)(text_cursor.line - starting_row),
+                           (int)text_cursor.col, &cursor_cell_copy);
 
         // white out the background
         cursor_cell_copy.channels |=
             NCCHANNELS_INITIALIZER(0x00, 0x00, 0x00, 0xff, 0xff, 0xff);
 
-        ncplane_putc_yx(plane_ptr, text_cursor.line - starting_row,
-                        text_cursor.col, &cursor_cell_copy);
+        ncplane_putc_yx(plane_ptr, (int)(text_cursor.line - starting_row),
+                        (int)text_cursor.col, &cursor_cell_copy);
     }
 
     void render_text(State const &state) {
@@ -94,7 +94,7 @@ class TextPlane {
         // wrapping, and the more) important case is none wrap
         for (size_t plane_row_idx = 0; plane_row_idx < row_count;
              ++plane_row_idx) {
-            ncplane_putnstr_yx(plane_ptr, plane_row_idx, 0,
+            ncplane_putnstr_yx(plane_ptr, (int)plane_row_idx, 0,
                                visual_lines[plane_row_idx].size(),
                                visual_lines[plane_row_idx].data());
         }

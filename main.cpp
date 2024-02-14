@@ -27,7 +27,7 @@ void handle_keypress(ncinput nc_input, State &state) {
     state.handle_keypress(nc_input);
 }
 
-int main(int argc, char **argv) {
+int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
     // set up initial state
     State state;
