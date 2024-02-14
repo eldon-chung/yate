@@ -51,7 +51,15 @@ class TextBuffer {
         }
     }
 
-    void insert_delete() {}
+    void insert_delete() {
+        if (cursor.col < buffer.at(cursor.line).size()) {
+            buffer.at(cursor.line).erase(cursor.col, 1);
+        } else if (cursor.line + 1 < buffer.size()) {
+            assert(cursor.col == buffer.at(cursor.line).size());
+            buffer.at(cursor.line) += buffer.at(cursor.line + 1);
+            buffer.erase(buffer.begin() + (long)cursor.line + 1);
+        }
+    }
 
     std::vector<std::string_view> get_n_lines(size_t starting_row,
                                               size_t row_count) const {
