@@ -1,6 +1,10 @@
 #pragma once
 
+#include <stdlib.h>
+
 #include <notcurses/notcurses.h>
+
+#include <iostream>
 
 #include "text_buffer.h"
 
@@ -11,20 +15,30 @@ struct State {
 
     void handle_keypress(ncinput nc_input) {
 
+        // handle arrow keys
+        if (nc_input.id == NCKEY_LEFT || nc_input.id == NCKEY_RIGHT ||
+            nc_input.id == NCKEY_DOWN || nc_input.id == NCKEY_UP) {
+            text_buffer.move_cursor(nc_input.id - preterunicode(2));
+            return;
+        }
+
         // some chars to insert first
         // insert newline
         if (nc_input.id == 127) {
             text_buffer.insert_newline();
+            return;
         }
 
         // backspace
         if (nc_input.id == 8) {
             text_buffer.insert_backspace();
+            return;
         }
 
-        // backspace
+        // delete
         if (nc_input.id == 127) {
-            text_buffer.insert_backspace();
+            text_buffer.insert_delete();
+            return;
         }
 
         // handle unmodified inputs
@@ -32,6 +46,7 @@ struct State {
         if (nc_input.id == 9 || (nc_input.id <= 255 && nc_input.id >= 32) ||
             nc_input.id != 127) {
             text_buffer.insert_char((char)nc_input.id);
+            return;
         }
     }
 };
