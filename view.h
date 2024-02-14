@@ -11,11 +11,20 @@
 
 class TextPlane {
     ncplane *plane_ptr;
+    ncplane *cursor_plane_ptr;
     size_t starting_row;
 
   public:
     TextPlane(ncplane *text_plane_ptr)
-        : plane_ptr(text_plane_ptr), starting_row(0) {}
+        : plane_ptr(text_plane_ptr), starting_row(0) {
+        ncplane_options cursor_plane_opts = {
+            .y = 0, .x = 0, .rows = 1, .cols = 1};
+        cursor_plane_ptr = ncplane_create(plane_ptr, &cursor_plane_opts);
+
+        nccell cursor_plane_base_cell{
+            .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 0xff, 0xff, 0xff)};
+        ncplane_set_base_cell(cursor_plane_ptr, &cursor_plane_base_cell);
+    }
     ~TextPlane() { ncplane_destroy(plane_ptr); }
 
     void render(State const &state) {
@@ -36,23 +45,10 @@ class TextPlane {
         assert(text_cursor.col < col_count);
 
         std::cerr << text_cursor.col << std::endl;
-        ncplane_cursor_move_yx(plane_ptr,
-                               (int)(text_cursor.line - starting_row),
-                               (int)text_cursor.col);
-        unsigned int y, x;
-        ncplane_cursor_yx(plane_ptr, &y, &x);
-        std::cerr << "y: " << y << " x: " << x << std::endl;
 
-        // struct nccell cursor_cell_copy;
-        // ncplane_at_yx_cell(plane_ptr, (int)(text_cursor.line - starting_row),
-        //                    (int)text_cursor.col, &cursor_cell_copy);
-
-        // // white out the background
-        // cursor_cell_copy.channels |=
-        //     NCCHANNELS_INITIALIZER(0x00, 0x00, 0x00, 0xff, 0xff, 0xff);
-
-        // ncplane_putc_yx(plane_ptr, (int)(text_cursor.line - starting_row),
-        //                 (int)text_cursor.col, &cursor_cell_copy);
+        ncplane_move_yx(cursor_plane_ptr,
+                        (int)(text_cursor.line - starting_row),
+                        (int)text_cursor.col);
     }
 
     void render_text(State const &state) {
@@ -172,9 +168,6 @@ class View {
         nccell text_plane_base_cell = {.channels = NCCHANNELS_INITIALIZER(
                                            0xff, 0xff, 0xff, 169, 169, 169)};
         ncplane_set_base_cell(text_plane_ptr, &text_plane_base_cell);
-
-        // enable cursor
-        notcurses_cursor_enable(nc_ptr, 0, 0);
 
         // now create the UI elements
         static View view(nc_ptr, text_plane_ptr);
