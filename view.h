@@ -80,7 +80,6 @@ class TextPlane {
         // for now we assume line wrapping is a thing
         std::vector<std::string_view> visual_lines;
         visual_lines.reserve(logical_lines.size());
-        std::cerr << "logical_lines size:" << logical_lines.size() << std::endl;
 
         for (size_t logical_idx = 0; logical_idx < logical_lines.size() &&
                                      visual_lines.size() < row_count;
@@ -89,8 +88,6 @@ class TextPlane {
             break_into_visual_lines(logical_lines[logical_idx], visual_lines,
                                     row_count, col_count);
         }
-
-        std::cerr << "visual lines size:" << visual_lines.size() << std::endl;
 
         // pad the remaining lines
         for (size_t remaining_idx = visual_lines.size();
