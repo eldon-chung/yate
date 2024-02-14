@@ -26,7 +26,7 @@ class TextBuffer {
     TextBuffer() : buffer({""}), cursor({0, 0}) {}
 
     void insert_char(char c) {
-        buffer.at(cursor.line).insert(cursor.col, 1, c);
+        buffer.at(cursor.line).insert(cursor.col++, 1, c);
     }
 
     void insert_newline() {
@@ -67,7 +67,7 @@ class TextBuffer {
             if (cursor.col > 0) {
                 --cursor.col;
             } else if (cursor.line > 0) {
-                cursor.col = buffer.at(cursor.line).size();
+                cursor.col = buffer.at(--cursor.line).size();
             }
         } break;
         case Cursor::UP: {
