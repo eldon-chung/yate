@@ -44,14 +44,13 @@ class TextPlane {
                text_cursor.line < state.get_buffer().num_lines());
         assert(text_cursor.col < col_count);
 
-        std::cerr << text_cursor.col << std::endl;
-
         ncplane_move_yx(cursor_plane_ptr,
                         (int)(text_cursor.line - starting_row),
                         (int)text_cursor.col);
     }
 
     void render_text(State const &state) {
+
         // use this as a line breaker for line wraps
         auto break_into_visual_lines =
             [](std::string_view logical_line,
@@ -68,6 +67,8 @@ class TextPlane {
                 }
             };
 
+        ncplane_erase(plane_ptr);
+
         // get the text_plane size
         auto [row_count, col_count] = get_yx_dim();
 
@@ -79,14 +80,17 @@ class TextPlane {
         // for now we assume line wrapping is a thing
         std::vector<std::string_view> visual_lines;
         visual_lines.reserve(logical_lines.size());
+        std::cerr << "logical_lines size:" << logical_lines.size() << std::endl;
 
         for (size_t logical_idx = 0; logical_idx < logical_lines.size() &&
                                      visual_lines.size() < row_count;
              ++logical_idx) {
 
-            break_into_visual_lines(logical_lines[logical_idx++], visual_lines,
+            break_into_visual_lines(logical_lines[logical_idx], visual_lines,
                                     row_count, col_count);
         }
+
+        std::cerr << "visual lines size:" << visual_lines.size() << std::endl;
 
         // pad the remaining lines
         for (size_t remaining_idx = visual_lines.size();

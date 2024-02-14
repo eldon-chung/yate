@@ -29,7 +29,16 @@ class TextBuffer {
         buffer.at(cursor.line).insert(cursor.col, 1, c);
     }
 
-    void insert_newline() {}
+    void insert_newline() {
+        std::string next_line = buffer.at(cursor.line).substr(cursor.col);
+        buffer.at(cursor.line).resize(cursor.col);
+        buffer.insert(buffer.begin() + (long)cursor.line + 1,
+                      std::move(next_line));
+
+        // then set the cursor
+        ++cursor.line;
+        cursor.col = 0;
+    }
 
     void insert_backspace() {}
 
