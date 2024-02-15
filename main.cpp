@@ -1,44 +1,71 @@
 #include <assert.h>
 
 #include <iostream>
+#include <optional>
 
 #include <notcurses/notcurses.h>
 
-#include "state.h"
 #include "view.h"
 
-// ideally this ends up handling the meta state, not just the
-// buffer
-void handle_keypress(ncinput nc_input, State &state) {
-    // for now we keep it at this level
-    //  eventually this is render text_plane
+// Program state
+struct ProgramState {
+    TextBuffer text_buffer;
+    View view;
 
-    if (nc_input.evtype == NCTYPE_RELEASE) {
-        return;
+    ProgramState() : view(std::move(View::init_view())) {}
+    TextBuffer const &get_buffer() const { return text_buffer; }
+
+    void handle_keypress(ncinput nc_input) {
+        // handle arrow keys
+        if (nc_input.id == NCKEY_LEFT || nc_input.id == NCKEY_RIGHT ||
+            nc_input.id == NCKEY_DOWN || nc_input.id == NCKEY_UP) {
+            text_buffer.move_cursor(nc_input.id - preterunicode(2));
+            return;
+        }
+
+        // some chars to insert first
+        // insert newline
+        if (nc_input.id == NCKEY_ENTER) {
+            text_buffer.insert_newline();
+            return;
+        }
+
+        // backspace
+        if (nc_input.id == NCKEY_BACKSPACE) {
+            text_buffer.insert_backspace();
+            return;
+        }
+
+        // delete
+        if (nc_input.id == NCKEY_DEL) {
+            text_buffer.insert_delete();
+            return;
+        }
+
+        // handle unmodified inputs
+        // and need to handle delete separately
+        if (nc_input.id == NCKEY_TAB ||
+            (nc_input.id <= 255 && nc_input.id >= 32) ||
+            nc_input.id != NCKEY_DEL) {
+            text_buffer.insert_char((char)nc_input.id);
+            return;
+        }
     }
 
-    // bit of a hack since I'm supposed
-    // to access the values via other means
-    if (nc_input.modifiers != 0) {
-        return;
-    }
+    void run_event_loop() {
+        view.render(text_buffer);
 
-    // for now it just handles the chars
-    state.handle_keypress(nc_input);
-}
+        while (true) {
+            struct ncinput input = view.get_keypress();
+            handle_keypress(input);
+            view.render(text_buffer);
+        }
+    }
+};
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
     // set up initial state
-    State state;
-
-    // TODO: make this an actual constructed thing
-    View view = std::move(View::init_view());
-
-    view.render(state);
-
-    while (true) {
-        handle_keypress(view.get_keypress(), state);
-        view.render(state);
-    }
+    ProgramState program_state;
+    program_state.run_event_loop();
 }

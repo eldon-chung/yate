@@ -7,7 +7,7 @@
 
 #include <utility>
 
-#include "state.h"
+#include "text_buffer.h"
 
 class TextPlane {
     ncplane *plane_ptr;
@@ -27,21 +27,21 @@ class TextPlane {
     }
     ~TextPlane() { ncplane_destroy(plane_ptr); }
 
-    void render(State const &state) {
+    void render(TextBuffer const &state) {
         render_text(state);
         render_cursor(state);
     }
 
   private:
-    void render_cursor(State const &state) {
-        TextBuffer::Cursor text_cursor = state.get_buffer().get_cursor();
+    void render_cursor(TextBuffer const &state) {
+        TextBuffer::Cursor text_cursor = state.get_cursor();
 
         // get the text_plane size
         auto [row_count, col_count] = get_yx_dim();
 
         // assert the cursor has to be within the view range
         assert(text_cursor.line >= starting_row &&
-               text_cursor.line < state.get_buffer().num_lines());
+               text_cursor.line < state.num_lines());
         assert(text_cursor.col < col_count);
 
         ncplane_move_yx(cursor_plane_ptr,
@@ -49,7 +49,7 @@ class TextPlane {
                         (int)text_cursor.col);
     }
 
-    void render_text(State const &state) {
+    void render_text(TextBuffer const &state) {
 
         // use this as a line breaker for line wraps
         auto break_into_visual_lines =
@@ -74,7 +74,7 @@ class TextPlane {
 
         // get that many logical rows from the textbuffer
         std::vector<std::string_view> logical_lines =
-            state.get_buffer().get_n_lines(starting_row, row_count);
+            state.get_n_lines(starting_row, row_count);
 
         // break up the lines into visual lines
         // for now we assume line wrapping is a thing
@@ -152,8 +152,6 @@ class View {
             .flags = NCOPTION_SUPPRESS_BANNERS | NCOPTION_PRESERVE_CURSOR};
         notcurses *nc_ptr = notcurses_init(&nc_options, nullptr);
 
-        // enable cursor
-
         // get the base ptr
         ncplane *std_plane_ptr = notcurses_stdplane(nc_ptr);
 
@@ -175,7 +173,7 @@ class View {
         return view;
     }
 
-    void render(State const &state) {
+    void render(TextBuffer const &state) {
         // render the text plane
         text_plane.render(state);
         notcurses_render(nc_ptr);
