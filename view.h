@@ -10,13 +10,16 @@
 #include "text_buffer.h"
 
 class TextPlane {
+    // should it just get a ptr to text buffer?
+    TextBuffer const *buffer_ptr;
     ncplane *plane_ptr;
     ncplane *cursor_plane_ptr;
     size_t starting_row;
 
   public:
-    TextPlane(ncplane *text_plane_ptr)
-        : plane_ptr(text_plane_ptr), starting_row(0) {
+    TextPlane(TextBuffer const *text_buffer_ptr, ncplane *text_plane_ptr)
+        : buffer_ptr(text_buffer_ptr), plane_ptr(text_plane_ptr),
+          starting_row(0) {
         ncplane_options cursor_plane_opts = {
             .y = 0, .x = 0, .rows = 1, .cols = 1};
         cursor_plane_ptr = ncplane_create(plane_ptr, &cursor_plane_opts);
@@ -27,21 +30,21 @@ class TextPlane {
     }
     ~TextPlane() { ncplane_destroy(plane_ptr); }
 
-    void render(TextBuffer const &state) {
-        render_text(state);
-        render_cursor(state);
+    void render() {
+        render_text();
+        render_cursor();
     }
 
   private:
-    void render_cursor(TextBuffer const &state) {
-        TextBuffer::Cursor text_cursor = state.get_cursor();
+    void render_cursor() {
+        TextBuffer::Cursor text_cursor = buffer_ptr->get_cursor();
 
         // get the text_plane size
         auto [row_count, col_count] = get_yx_dim();
 
         // assert the cursor has to be within the view range
         assert(text_cursor.line >= starting_row &&
-               text_cursor.line < state.num_lines());
+               text_cursor.line < buffer_ptr->num_lines());
         assert(text_cursor.col < col_count);
 
         ncplane_move_yx(cursor_plane_ptr,
@@ -49,7 +52,7 @@ class TextPlane {
                         (int)text_cursor.col);
     }
 
-    void render_text(TextBuffer const &state) {
+    void render_text() {
 
         // use this as a line breaker for line wraps
         auto break_into_visual_lines =
@@ -74,7 +77,7 @@ class TextPlane {
 
         // get that many logical rows from the textbuffer
         std::vector<std::string_view> logical_lines =
-            state.get_n_lines(starting_row, row_count);
+            buffer_ptr->get_n_lines(starting_row, row_count);
 
         // break up the lines into visual lines
         // for now we assume line wrapping is a thing
@@ -113,7 +116,6 @@ class TextPlane {
 };
 
 class View {
-
     notcurses *nc_ptr;
     TextPlane text_plane;
 
@@ -121,8 +123,8 @@ class View {
     // its own UI element
     size_t starting_row;
 
-    View(notcurses *nc, ncplane *text_plane_ptr)
-        : nc_ptr(nc), text_plane(text_plane_ptr), starting_row(0) {}
+    View(notcurses *nc, ncplane *text_plane_ptr, TextBuffer const *state)
+        : nc_ptr(nc), text_plane(state, text_plane_ptr), starting_row(0) {}
 
   public:
     View(View const &) = delete;
@@ -146,7 +148,7 @@ class View {
 
     size_t get_starting_row() const { return starting_row; }
 
-    static View &init_view() {
+    static View &init_view(TextBuffer const *text_buffer_ptr) {
         // notcurses init
         static struct notcurses_options nc_options = {
             .flags = NCOPTION_SUPPRESS_BANNERS | NCOPTION_PRESERVE_CURSOR};
@@ -169,13 +171,13 @@ class View {
         ncplane_set_base_cell(text_plane_ptr, &text_plane_base_cell);
 
         // now create the UI elements
-        static View view(nc_ptr, text_plane_ptr);
+        static View view(nc_ptr, text_plane_ptr, text_buffer_ptr);
         return view;
     }
 
-    void render(TextBuffer const &state) {
+    void render() {
         // render the text plane
-        text_plane.render(state);
+        text_plane.render();
         notcurses_render(nc_ptr);
     }
 
