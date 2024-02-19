@@ -5,64 +5,52 @@
 #include <string>
 #include <vector>
 
+#include "util.h"
+
 struct TextBuffer {
     std::vector<std::string> buffer;
 
   public:
-    struct Cursor {
-        size_t line;
-        size_t col;
+    TextBuffer() : buffer({""}) {}
 
-        enum Direction {
-            UP = 0,
-            RIGHT,
-            DOWN,
-            LEFT,
-        };
-    };
-
-    Cursor cursor;
-
-    TextBuffer() : buffer({""}), cursor({0, 0}) {}
-
-    void insert_char(char c) {
-        buffer.at(cursor.line).insert(cursor.col++, 1, c);
+    void insert_char_at(Point cursor, char c) {
+        buffer.at(cursor.row).insert(cursor.col++, 1, c);
     }
 
-    void insert_newline() {
-        std::string next_line = buffer.at(cursor.line).substr(cursor.col);
-        buffer.at(cursor.line).resize(cursor.col);
-        buffer.insert(buffer.begin() + (long)cursor.line + 1,
+    void insert_newline_at(Point cursor) {
+        std::string next_line = buffer.at(cursor.row).substr(cursor.col);
+        buffer.at(cursor.row).resize(cursor.col);
+        buffer.insert(buffer.begin() + (long)cursor.row + 1,
                       std::move(next_line));
 
         // then set the cursor
-        ++cursor.line;
+        ++cursor.row;
         cursor.col = 0;
     }
 
-    void insert_backspace() {
+    void insert_backspace_at(Point cursor) {
         if (cursor.col > 0) {
-            buffer.at(cursor.line).erase(--cursor.col, 1);
+            buffer.at(cursor.row).erase(--cursor.col, 1);
 
-        } else if (cursor.line > 0) {
-            cursor.col = buffer.at(--cursor.line).length();
-            buffer.at(cursor.line).append(buffer.at(cursor.line + 1));
-            buffer.erase(buffer.begin() + (long)cursor.line + 1);
+        } else if (cursor.row > 0) {
+            cursor.col = buffer.at(--cursor.row).length();
+            buffer.at(cursor.row).append(buffer.at(cursor.row + 1));
+            buffer.erase(buffer.begin() + (long)cursor.row + 1);
         }
     }
 
-    void insert_delete() {
-        if (cursor.col < buffer.at(cursor.line).size()) {
-            buffer.at(cursor.line).erase(cursor.col, 1);
-        } else if (cursor.line + 1 < buffer.size()) {
-            assert(cursor.col == buffer.at(cursor.line).size());
-            buffer.at(cursor.line) += buffer.at(cursor.line + 1);
-            buffer.erase(buffer.begin() + (long)cursor.line + 1);
+    void insert_delete_at(Point cursor) {
+        if (cursor.col < buffer.at(cursor.row).size()) {
+            buffer.at(cursor.row).erase(cursor.col, 1);
+        } else if (cursor.row + 1 < buffer.size()) {
+            assert(cursor.col == buffer.at(cursor.row).size());
+            buffer.at(cursor.row) += buffer.at(cursor.row + 1);
+            buffer.erase(buffer.begin() + (long)cursor.row + 1);
         }
     }
 
-    std::vector<std::string_view> get_n_lines(size_t starting_row,
-                                              size_t row_count) const {
+    std::vector<std::string_view> get_n_lines_at(size_t starting_row,
+                                                 size_t row_count) const {
         std::vector<std::string_view> to_ret;
         to_ret.reserve(row_count);
 
@@ -74,49 +62,9 @@ struct TextBuffer {
         return to_ret;
     }
 
+    std::string_view get_line_at(size_t starting_row) const {
+        return buffer.at(starting_row);
+    }
+
     size_t num_lines() const { return buffer.size(); }
-
-    Cursor const &get_cursor() const { return cursor; }
-
-    // void move_cursor(uint32_t direction_idx) {
-    //     switch (direction_idx) {
-    //     case Cursor::LEFT: {
-    //         if (cursor.col > 0) {
-    //             --cursor.col;
-    //         } else if (cursor.line > 0) {
-    //             cursor.col = buffer.at(--cursor.line).size();
-    //         }
-    //     } break;
-    //     case Cursor::UP: {
-    //         if (cursor.line == 0) {
-    //             cursor.col = 0;
-    //         } else {
-    //             cursor.col =
-    //                 std::min(cursor.col, buffer.at(--cursor.line).size());
-    //         }
-    //     } break;
-    //     case Cursor::RIGHT:
-    //         assert(!buffer.empty());
-    //         if (cursor.col == buffer.at(cursor.line).size() &&
-    //             cursor.line + 1 < buffer.size()) {
-    //             // move down one line
-    //             cursor.col = 0;
-    //             ++cursor.line;
-    //         } else if (cursor.col < buffer.at(cursor.line).size()) {
-    //             ++cursor.col;
-    //         }
-    //         break;
-    //     case Cursor::DOWN:
-    //         if (cursor.line + 1 < buffer.size()) {
-    //             ++cursor.line;
-    //             cursor.col =
-    //                 std::min(cursor.col, buffer.at(cursor.line).size());
-    //         } else if (cursor.line + 1 == buffer.size()) {
-    //             cursor.col = buffer.at(cursor.line).size();
-    //         }
-    //         break;
-    //     default:
-    //         break;
-    //     }
-    // }
 };

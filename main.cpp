@@ -31,7 +31,9 @@ struct ProgramState {
         if (nc_input.modifiers == 0 &&
             ((nc_input.id >= 32 && nc_input.id <= 255) ||
              nc_input.id == NCKEY_TAB)) {
-            text_buffer.insert_char((char)nc_input.id);
+            text_buffer.insert_char_at(view.get_text_cursor(),
+                                       (char)nc_input.id);
+            view.move_cursor_right();
             return;
         }
 
@@ -39,17 +41,20 @@ struct ProgramState {
 
         // TODO: handle all the other modifiers for these cases
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_BACKSPACE) {
-            text_buffer.insert_backspace();
+            Point old_pos = view.get_cursor();
+            view.move_cursor_left();
+            text_buffer.insert_backspace_at(old_pos);
             return;
         }
 
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_ENTER) {
-            text_buffer.insert_newline();
+            text_buffer.insert_newline_at(view.get_text_cursor());
+            view.move_cursor_right();
             return;
         }
 
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_DEL) {
-            text_buffer.insert_delete();
+            text_buffer.insert_delete_at(view.get_text_cursor());
             return;
         }
         keybinds_table[nc_input]();
@@ -88,54 +93,13 @@ struct ProgramState {
     }
 
   private:
-    // list of handlers?
-    void LEFT_ARROW_HANDLER() {
-        // modify text buffer stuff
-        if (text_buffer.cursor.col > 0) {
-            --text_buffer.cursor.col;
-        } else if (text_buffer.cursor.line > 0) {
-            text_buffer.cursor.col =
-                text_buffer.buffer.at(--text_buffer.cursor.line).size();
-        }
+    void LEFT_ARROW_HANDLER() { view.move_cursor_left(); }
 
-        // modify view stuff
-    }
+    void RIGHT_ARROW_HANDLER() { view.move_cursor_right(); }
 
-    void RIGHT_ARROW_HANDLER() {
-        assert(!text_buffer.buffer.empty());
-        if (text_buffer.cursor.col ==
-                text_buffer.buffer.at(text_buffer.cursor.line).size() &&
-            text_buffer.cursor.line + 1 < text_buffer.buffer.size()) {
-            // move down one line
-            text_buffer.cursor.col = 0;
-            ++text_buffer.cursor.line;
-        } else if (text_buffer.cursor.col <
-                   text_buffer.buffer.at(text_buffer.cursor.line).size()) {
-            ++text_buffer.cursor.col;
-        }
-    }
+    void UP_ARROW_HANDLER() { view.move_cursor_up(); }
 
-    void UP_ARROW_HANDLER() {
-        if (text_buffer.cursor.line == 0) {
-            text_buffer.cursor.col = 0;
-        } else {
-            text_buffer.cursor.col = std::min(
-                text_buffer.cursor.col,
-                text_buffer.buffer.at(--text_buffer.cursor.line).size());
-        }
-    }
-
-    void DOWN_ARROW_HANDLER() {
-        if (text_buffer.cursor.line + 1 < text_buffer.buffer.size()) {
-            ++text_buffer.cursor.line;
-            text_buffer.cursor.col =
-                std::min(text_buffer.cursor.col,
-                         text_buffer.buffer.at(text_buffer.cursor.line).size());
-        } else if (text_buffer.cursor.line + 1 == text_buffer.buffer.size()) {
-            text_buffer.cursor.col =
-                text_buffer.buffer.at(text_buffer.cursor.line).size();
-        }
-    }
+    void DOWN_ARROW_HANDLER() { view.move_cursor_down(); }
 };
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
