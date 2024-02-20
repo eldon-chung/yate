@@ -26,13 +26,14 @@ class TextPlane {
     ncplane *cursor_plane_ptr;
     WrapStatus wrap_status;
     Point tl_corner;
+    Point br_corner; // exclusive range that we also maintain
     Point cursor;
 
   public:
     TextPlane(notcurses *nc_ptr, TextBuffer const *text_buffer_ptr,
               unsigned int num_rows, unsigned int num_cols)
         : buffer_ptr(text_buffer_ptr), wrap_status(WrapStatus::WRAP),
-          tl_corner({0, 0}), cursor({0, 0}) {
+          tl_corner({0, 0}), br_corner({0, 1}), cursor({0, 0}) {
 
         // create the text_plane
         ncplane_options text_plane_opts = {
@@ -89,7 +90,7 @@ class TextPlane {
           plane_ptr(std::exchange(other.plane_ptr, nullptr)),
           cursor_plane_ptr(std::exchange(other.cursor_plane_ptr, nullptr)),
           wrap_status(other.wrap_status), tl_corner(other.tl_corner),
-          cursor(other.cursor) {}
+          br_corner(other.br_corner), cursor(other.cursor) {}
     TextPlane &operator=(TextPlane const &) = delete;
     TextPlane &operator=(TextPlane &&other) {
         TextPlane temp{std::move(other)};
@@ -105,6 +106,7 @@ class TextPlane {
         swap(a.cursor_plane_ptr, b.cursor_plane_ptr);
         swap(a.wrap_status, b.wrap_status);
         swap(a.tl_corner, b.tl_corner);
+        swap(a.br_corner, b.br_corner);
         swap(a.cursor, b.cursor);
     }
 
@@ -160,28 +162,52 @@ class TextPlane {
         size_t curr_logical_row = tl_corner.row;
         size_t curr_logical_col = tl_corner.col;
 
+        line_rows.push_back(0);
+
         while (num_lines_output < row_count &&
                curr_logical_row < buffer_ptr->num_lines()) {
-            // string_view is nice for tracking sizes
-            if (curr_logical_col == 0) {
+
+            if (curr_logical_col == 0 && num_lines_output > 0) {
                 line_rows.push_back(num_lines_output);
             }
 
             std::string_view curr_line =
                 buffer_ptr->get_line_at(curr_logical_row);
             assert(tl_corner.col <= curr_line.size());
-            curr_line = curr_line.substr(curr_logical_col);
 
-            ncplane_putnstr_yx(plane_ptr, (int)num_lines_output, 0, col_count,
-                               curr_line.data());
+            int num_written = ncplane_putnstr_yx(
+                plane_ptr, (int)num_lines_output, 0, col_count,
+                curr_line.data() + curr_logical_col);
+
+            if (num_written < 0) {
+                // handle error cases?
+                std::cerr << "this should not have happened" << std::endl;
+                exit(1);
+            }
+
             ++num_lines_output;
+            br_corner.row = curr_logical_row;
+            br_corner.col = curr_logical_col + col_count;
+
+            // is there some row shenanigan we need to do
+
             if (curr_logical_col + col_count < curr_line.size()) {
                 curr_logical_col += col_count;
             } else {
                 curr_logical_col = 0;
                 ++curr_logical_row;
             }
-        };
+        }
+
+        if (line_rows.empty()) {
+            line_rows.push_back(0);
+        }
+
+        // set br_corner only when screen is filled
+        if (num_lines_output < row_count) {
+            ++br_corner.row;
+            br_corner.col = col_count;
+        }
 
         return line_rows;
     }
@@ -221,21 +247,14 @@ class TextPlane {
             ++cursor.col;
         }
 
-        // now update tl_corner to chase it if needed
-        auto [num_rows, num_cols] = get_yx_dim(plane_ptr);
-        Point br_corner = tl_corner + Point{num_rows - 1, num_cols};
         if (cursor >= br_corner) {
             visual_scroll_down();
         }
     }
 
     void move_cursor_down() {
-        if (cursor.row + 1 == buffer_ptr->buffer.size()) {
-            // special logic for the final row
-            cursor.col = buffer_ptr->buffer.at(cursor.row).size();
-        } else if (wrap_status == WrapStatus::WRAP) {
+        if (wrap_status == WrapStatus::WRAP) {
             // TODO: add jump to end logic
-            assert(cursor.row + 1 < buffer_ptr->buffer.size());
             auto [num_rows, num_cols] = get_plane_yx_dim();
             size_t curr_line_size = buffer_ptr->buffer.at(cursor.row).size();
 
@@ -246,6 +265,9 @@ class TextPlane {
                            num_cols <=
                        curr_line_size) {
                 cursor.col = std::min(cursor.col + num_cols, curr_line_size);
+            } else if (cursor.row + 1 == buffer_ptr->buffer.size()) {
+                // special logic for the final row
+                cursor.col = buffer_ptr->buffer.at(cursor.row).size();
             } else {
                 assert(cursor.row + 1 < buffer_ptr->buffer.size());
                 ++cursor.row;
@@ -261,22 +283,19 @@ class TextPlane {
             }
         }
 
-        // now update tl_corner to chase it if needed
-        auto [num_rows, num_cols] = get_yx_dim(plane_ptr);
-        Point br_corner = tl_corner + Point{num_rows - 1, num_cols};
         if (cursor >= br_corner) {
             visual_scroll_down();
         }
     }
 
     void move_cursor_up() {
-        if (cursor.row == 0) {
-            // special case of jump to front
-            cursor.col = 0;
-        } else if (wrap_status == WrapStatus::WRAP) {
+        if (wrap_status == WrapStatus::WRAP) {
             auto [num_rows, num_cols] = get_yx_dim(plane_ptr);
             if (cursor.col >= num_cols) {
                 cursor.col -= num_cols;
+            } else if (cursor.row == 0) {
+                // special case of jump to front
+                cursor.col = 0;
             } else {
                 assert(cursor.row > 0);
                 --cursor.row;
@@ -303,7 +322,7 @@ class TextPlane {
     }
 
     void visual_scroll_up() {
-        auto [num_rows, num_cols] = get_plane_yx_dim();
+        auto [num_rows, num_cols] = get_yx_dim(plane_ptr);
         if (wrap_status == WrapStatus::WRAP) {
             if (tl_corner.col == 0) {
                 assert(tl_corner.row > 0);
@@ -326,11 +345,10 @@ class TextPlane {
     }
 
     void visual_scroll_down() {
-        auto [num_rows, num_cols] = get_plane_yx_dim();
-        // TODO: fix this
+        auto [num_rows, num_cols] = get_yx_dim(plane_ptr);
         if (wrap_status == WrapStatus::WRAP) {
-            if (cursor.col + num_cols >
-                buffer_ptr->buffer.at(cursor.row).size()) {
+            if (tl_corner.col + num_cols >
+                buffer_ptr->buffer.at(tl_corner.row).size()) {
                 assert(tl_corner.row + 1 < buffer_ptr->buffer.size());
                 tl_corner.col = 0;
                 ++tl_corner.row;
