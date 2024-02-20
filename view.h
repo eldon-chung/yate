@@ -35,9 +35,12 @@ class TextPlane {
         : buffer_ptr(text_buffer_ptr), wrap_status(WrapStatus::WRAP),
           tl_corner({0, 0}), br_corner({0, 1}), cursor({0, 0}) {
 
+        static const int num_digits = 4;
+
         // create the text_plane
-        ncplane_options text_plane_opts = {
-            .x = 2, .rows = num_rows - 1, .cols = num_cols - 3};
+        ncplane_options text_plane_opts = {.x = num_digits,
+                                           .rows = num_rows - 1,
+                                           .cols = num_cols - num_digits - 1};
         plane_ptr =
             ncplane_create(notcurses_stdplane(nc_ptr), &text_plane_opts);
 
@@ -57,7 +60,7 @@ class TextPlane {
 
         // line number plane opts
         ncplane_options line_number_plane_opts = {
-            .y = 0, .x = -2, .rows = num_rows - 1, .cols = 2};
+            .y = 0, .x = -num_digits, .rows = num_rows - 1, .cols = num_digits};
 
         line_number_plane_ptr =
             ncplane_create(plane_ptr, &line_number_plane_opts);
@@ -116,7 +119,7 @@ class TextPlane {
         char out_str[5];
         for (size_t idx = 0; idx < row_idxs.size(); ++idx) {
             size_t local_offset = row_idxs[idx];
-            snprintf(out_str, 3, "%zu", tl_corner.row + idx + 1);
+            snprintf(out_str, 5, "%zu", tl_corner.row + idx + 1);
             ncplane_putnstr_yx(line_number_plane_ptr, (int)(local_offset), 0, 3,
                                out_str);
         }
