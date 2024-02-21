@@ -15,6 +15,7 @@ struct ProgramState {
 
     // The main states we maintain
     TextBuffer text_buffer;
+    std::string clipboard;
 
     View view;
 
