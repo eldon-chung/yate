@@ -5,6 +5,7 @@
 
 #include <notcurses/notcurses.h>
 
+#include <algorithm>
 #include <utility>
 #include <vector>
 
@@ -28,12 +29,14 @@ class TextPlane {
     Point tl_corner;
     Point br_corner; // exclusive range that we also maintain
     Point cursor;
+    std::optional<Point> anchor_cursor;
 
   public:
     TextPlane(notcurses *nc_ptr, TextBuffer const *text_buffer_ptr,
               unsigned int num_rows, unsigned int num_cols)
         : buffer_ptr(text_buffer_ptr), wrap_status(WrapStatus::WRAP),
-          tl_corner({0, 0}), br_corner({0, 1}), cursor({0, 0}) {
+          tl_corner({0, 0}), br_corner({0, 1}), cursor({0, 0}),
+          anchor_cursor(std::nullopt) {
 
         static const int num_digits = 4;
 
@@ -78,13 +81,6 @@ class TextPlane {
         ncplane_destroy(line_number_plane_ptr);
     }
 
-    void render() {
-        // make this vector a fixed array to avoid allocations?
-        auto row_idxs = render_text();
-        render_cursor(row_idxs);
-        render_line_numbers(row_idxs);
-    }
-
     TextPlane(TextPlane const &) = delete;
     TextPlane(TextPlane &&other)
         : buffer_ptr(std::exchange(other.buffer_ptr, nullptr)),
@@ -93,7 +89,8 @@ class TextPlane {
           plane_ptr(std::exchange(other.plane_ptr, nullptr)),
           cursor_plane_ptr(std::exchange(other.cursor_plane_ptr, nullptr)),
           wrap_status(other.wrap_status), tl_corner(other.tl_corner),
-          br_corner(other.br_corner), cursor(other.cursor) {}
+          br_corner(other.br_corner), cursor(other.cursor),
+          anchor_cursor(other.anchor_cursor) {}
     TextPlane &operator=(TextPlane const &) = delete;
     TextPlane &operator=(TextPlane &&other) {
         TextPlane temp{std::move(other)};
@@ -111,9 +108,80 @@ class TextPlane {
         swap(a.tl_corner, b.tl_corner);
         swap(a.br_corner, b.br_corner);
         swap(a.cursor, b.cursor);
+        swap(a.anchor_cursor, b.anchor_cursor);
+    }
+
+    void render() {
+        // make this vector a fixed array to avoid allocations?
+        auto row_idxs = render_text();
+        render_cursor(row_idxs);
+        render_selection(row_idxs);
+        render_line_numbers(row_idxs);
     }
 
   private:
+    void render_selection(std::vector<size_t> const &row_idxs) {
+        if (!anchor_cursor) {
+            return;
+        }
+
+        auto [row_count, col_count] = get_plane_yx_dim();
+
+        size_t num_lines_output = 0;
+        size_t curr_logical_row = tl_corner.row;
+        size_t curr_logical_col = tl_corner.col;
+        size_t row_indxs_idx = 1; // sigh naming
+
+        auto [lp, rp] = std::minmax(cursor, *anchor_cursor);
+
+        while (num_lines_output < row_count &&
+               curr_logical_row < buffer_ptr->num_lines()) {
+
+            if (curr_logical_row > rp.row ||
+                (curr_logical_row == rp.row && curr_logical_col >= rp.col)) {
+                return;
+            }
+
+            if (curr_logical_row >= lp.row && curr_logical_row <= rp.row) {
+                size_t visual_col_l = 0;
+                size_t visual_col_r = col_count;
+
+                // if on same row and visual chunk
+                if (curr_logical_row == lp.row &&
+                    (curr_logical_col <= lp.col)) {
+                    visual_col_l =
+                        std::max(lp.col, curr_logical_col) - curr_logical_col;
+                }
+
+                if (curr_logical_row == rp.row && curr_logical_col <= rp.col) {
+                    visual_col_r =
+                        std::min(rp.col - curr_logical_col, (size_t)col_count);
+                }
+
+                if (visual_col_l < visual_col_r) {
+                    ncplane_stain(
+                        plane_ptr, (int)num_lines_output, (int)visual_col_l, 1,
+                        (unsigned int)(visual_col_r - visual_col_l),
+                        NCCHANNELS_INITIALIZER(0, 0, 0, 0xff, 0xff, 0xff),
+                        NCCHANNELS_INITIALIZER(0, 0, 0, 0xff, 0xff, 0xff),
+                        NCCHANNELS_INITIALIZER(0, 0, 0, 0xff, 0xff, 0xff),
+                        NCCHANNELS_INITIALIZER(0, 0, 0, 0xff, 0xff, 0xff));
+                }
+            }
+
+            ++num_lines_output;
+
+            if (row_indxs_idx < row_idxs.size() &&
+                num_lines_output >= row_idxs[row_indxs_idx]) {
+                ++curr_logical_row;
+                curr_logical_col = 0;
+                ++row_indxs_idx;
+            } else {
+                curr_logical_col += col_count;
+            }
+        }
+    }
+
     void render_line_numbers(std::vector<size_t> const &row_idxs) {
         ncplane_erase(line_number_plane_ptr);
         char out_str[5];
@@ -226,13 +294,7 @@ class TextPlane {
     }
 
     void move_cursor_left() {
-        // update logical cursor
-        if (cursor.col > 0) {
-            --cursor.col;
-        } else if (cursor.row > 0) {
-            cursor.col = buffer_ptr->buffer.at(--cursor.row).size();
-        }
-
+        cursor = move_point_left(cursor);
         // now update tl_corner to chase it if needed
         if (cursor < tl_corner) {
             visual_scroll_up();
@@ -240,80 +302,22 @@ class TextPlane {
     }
 
     void move_cursor_right() {
-        assert(!buffer_ptr->buffer.empty());
-        if (cursor.col == buffer_ptr->buffer.at(cursor.row).size() &&
-            cursor.row + 1 < buffer_ptr->buffer.size()) {
-            // move down one line
-            cursor.col = 0;
-            ++cursor.row;
-        } else if (cursor.col < buffer_ptr->buffer.at(cursor.row).size()) {
-            ++cursor.col;
-        }
-
+        cursor = move_point_right(cursor);
+        // now update tl_corner to chase it if needed
         if (cursor >= br_corner) {
             visual_scroll_down();
         }
     }
 
     void move_cursor_down() {
-        if (wrap_status == WrapStatus::WRAP) {
-            // TODO: add jump to end logic
-            auto [num_rows, num_cols] = get_plane_yx_dim();
-            size_t curr_line_size = buffer_ptr->buffer.at(cursor.row).size();
-
-            if (curr_line_size == 0) {
-                cursor.col = 0;
-                ++cursor.row;
-            } else if ((cursor.col / curr_line_size * curr_line_size) +
-                           num_cols <=
-                       curr_line_size) {
-                cursor.col = std::min(cursor.col + num_cols, curr_line_size);
-            } else if (cursor.row + 1 == buffer_ptr->buffer.size()) {
-                // special logic for the final row
-                cursor.col = buffer_ptr->buffer.at(cursor.row).size();
-            } else {
-                assert(cursor.row + 1 < buffer_ptr->buffer.size());
-                ++cursor.row;
-                cursor.col = std::min(cursor.col,
-                                      buffer_ptr->buffer.at(cursor.row).size());
-            }
-        } else {
-            // non-wrapping movement
-            if (cursor.row + 1 < buffer_ptr->buffer.size()) {
-                ++cursor.row;
-                cursor.col = std::min(cursor.col,
-                                      buffer_ptr->buffer.at(cursor.row).size());
-            }
-        }
-
+        cursor = move_point_down(cursor);
         if (cursor >= br_corner) {
             visual_scroll_down();
         }
     }
 
     void move_cursor_up() {
-        if (wrap_status == WrapStatus::WRAP) {
-            auto [num_rows, num_cols] = get_yx_dim(plane_ptr);
-            if (cursor.col >= num_cols) {
-                cursor.col -= num_cols;
-            } else if (cursor.row == 0) {
-                // special case of jump to front
-                cursor.col = 0;
-            } else {
-                assert(cursor.row > 0);
-                --cursor.row;
-                size_t line_size = buffer_ptr->buffer.at(cursor.row).size();
-                size_t last_chunk_col = line_size / num_cols * line_size;
-                assert(cursor.col < num_cols);
-                cursor.col = std::min(cursor.col + last_chunk_col, line_size);
-            }
-        } else {
-            // non-wrapping movement
-            cursor.col = std::min(cursor.col,
-                                  buffer_ptr->buffer.at(--cursor.row).size());
-        }
-
-        // now update tl_corner to chase it if needed
+        cursor = move_point_up(cursor);
         if (cursor < tl_corner) {
             visual_scroll_up();
         }
@@ -360,6 +364,110 @@ class TextPlane {
             }
         }
         // TODO: what happens if nowrap
+    }
+
+    void move_to_point(Point const &point) {
+        // moves the top left corner to cover that row
+        // later we can add scrolling perhaps
+
+        // TODO: can we tell if the point is already on the screen?
+        // will prevent awkward jumps
+
+        auto [num_rows, num_cols] = get_yx_dim(plane_ptr);
+        tl_corner.row = point.row;
+        tl_corner.col = point.col / num_cols * num_cols;
+    }
+
+    void set_anchor() { anchor_cursor = cursor; }
+    void unset_anchor() { anchor_cursor = std::nullopt; }
+
+    Point move_point_down(Point const &p) {
+        Point to_return = p;
+        if (wrap_status == WrapStatus::WRAP) {
+            // TODO: add jump to end logic
+            auto [num_rows, num_cols] = get_plane_yx_dim();
+            size_t curr_line_size = buffer_ptr->buffer.at(to_return.row).size();
+
+            if (curr_line_size == 0) {
+                to_return.col = 0;
+                to_return.row =
+                    std::min(buffer_ptr->buffer.size() - 1, to_return.row + 1);
+            } else if ((to_return.col / curr_line_size * curr_line_size) +
+                           num_cols <=
+                       curr_line_size) {
+                to_return.col =
+                    std::min(to_return.col + num_cols, curr_line_size);
+            } else if (to_return.row + 1 == buffer_ptr->buffer.size()) {
+                // special logic for the final row
+                to_return.col = buffer_ptr->buffer.at(to_return.row).size();
+            } else {
+                assert(to_return.row + 1 < buffer_ptr->buffer.size());
+                ++to_return.row;
+                to_return.col = std::min(
+                    to_return.col, buffer_ptr->buffer.at(to_return.row).size());
+            }
+        } else {
+            // non-wrapping movement
+            if (to_return.row + 1 < buffer_ptr->buffer.size()) {
+                ++to_return.row;
+                to_return.col = std::min(
+                    to_return.col, buffer_ptr->buffer.at(to_return.row).size());
+            }
+        }
+
+        return to_return;
+    }
+
+    Point move_point_up(Point const &p) {
+        Point to_return = p;
+        if (wrap_status == WrapStatus::WRAP) {
+            auto [num_rows, num_cols] = get_yx_dim(plane_ptr);
+            if (to_return.col >= num_cols) {
+                to_return.col -= num_cols;
+            } else if (to_return.row == 0) {
+                // special case of jump to front
+                to_return.col = 0;
+            } else {
+                assert(to_return.row > 0);
+                --to_return.row;
+                size_t line_size = buffer_ptr->buffer.at(to_return.row).size();
+                size_t last_chunk_col = line_size / num_cols * line_size;
+                assert(to_return.col < num_cols);
+                to_return.col =
+                    std::min(to_return.col + last_chunk_col, line_size);
+            }
+        } else {
+            // non-wrapping movement
+            to_return.col = std::min(
+                to_return.col, buffer_ptr->buffer.at(--to_return.row).size());
+        }
+
+        return to_return;
+    }
+
+    Point move_point_left(Point const &p) {
+        Point to_return = p;
+        // update logical cursor
+        if (to_return.col > 0) {
+            --to_return.col;
+        } else if (to_return.row > 0) {
+            to_return.col = buffer_ptr->buffer.at(--to_return.row).size();
+        }
+        return to_return;
+    }
+
+    Point move_point_right(Point const &p) {
+        Point to_return = p;
+        if (to_return.col == buffer_ptr->buffer.at(to_return.row).size() &&
+            to_return.row + 1 < buffer_ptr->buffer.size()) {
+            // move down one line
+            to_return.col = 0;
+            ++to_return.row;
+        } else if (to_return.col <
+                   buffer_ptr->buffer.at(to_return.row).size()) {
+            ++to_return.col;
+        }
+        return to_return;
     }
 };
 
@@ -431,10 +539,97 @@ class View {
 
     Point get_text_cursor() const { return text_plane.cursor; }
 
-    void move_cursor_left() { text_plane.move_cursor_left(); }
-    void move_cursor_right() { text_plane.move_cursor_right(); }
-    void move_cursor_down() { text_plane.move_cursor_down(); }
-    void move_cursor_up() { text_plane.move_cursor_up(); }
+    void move_cursor_left() {
+        if (text_plane.anchor_cursor) {
+            text_plane.cursor =
+                std::min(text_plane.cursor, *text_plane.anchor_cursor);
+            text_plane.move_to_point(text_plane.cursor);
+            text_plane.unset_anchor();
+        } else {
+            text_plane.move_cursor_left();
+        }
+    }
+    void move_cursor_right() {
+        if (text_plane.anchor_cursor) {
+            text_plane.cursor =
+                std::max(text_plane.cursor, *text_plane.anchor_cursor);
+            text_plane.move_to_point(text_plane.cursor);
+            text_plane.unset_anchor();
+        } else {
+            text_plane.move_cursor_right();
+        }
+    }
+    void move_cursor_down() {
+        if (text_plane.anchor_cursor) {
+            text_plane.cursor =
+                std::max(text_plane.cursor, *text_plane.anchor_cursor);
+            text_plane.cursor = text_plane.move_point_down(text_plane.cursor);
+            text_plane.move_to_point(text_plane.cursor);
+            text_plane.unset_anchor();
+        } else {
+            text_plane.move_cursor_down();
+        }
+    }
+    void move_cursor_up() {
+        if (text_plane.anchor_cursor) {
+            text_plane.cursor =
+                std::min(text_plane.cursor, *text_plane.anchor_cursor);
+            text_plane.cursor = text_plane.move_point_up(text_plane.cursor);
+            text_plane.move_to_point(text_plane.cursor);
+            text_plane.unset_anchor();
+        } else {
+            text_plane.move_cursor_up();
+        }
+    }
     void move_cursor_to(Point new_curs) { text_plane.move_cursor_to(new_curs); }
+
+    void move_selector_left() {
+        if (!text_plane.anchor_cursor) {
+            text_plane.set_anchor();
+        }
+
+        text_plane.move_cursor_left();
+
+        assert(text_plane.anchor_cursor);
+        if (*text_plane.anchor_cursor == text_plane.cursor) {
+            text_plane.unset_anchor();
+        }
+    }
+    void move_selector_right() {
+        if (!text_plane.anchor_cursor) {
+            text_plane.set_anchor();
+        }
+
+        text_plane.move_cursor_right();
+
+        assert(text_plane.anchor_cursor);
+        if (*text_plane.anchor_cursor == text_plane.cursor) {
+            text_plane.unset_anchor();
+        }
+    }
+    void move_selector_down() {
+        if (!text_plane.anchor_cursor) {
+            text_plane.set_anchor();
+        }
+
+        text_plane.move_cursor_down();
+
+        assert(text_plane.anchor_cursor);
+        if (*text_plane.anchor_cursor == text_plane.cursor) {
+            text_plane.unset_anchor();
+        }
+    }
+    void move_selector_up() {
+        if (!text_plane.anchor_cursor) {
+            text_plane.set_anchor();
+        }
+
+        text_plane.move_cursor_up();
+
+        assert(text_plane.anchor_cursor);
+        if (*text_plane.anchor_cursor == text_plane.cursor) {
+            text_plane.unset_anchor();
+        }
+    }
     Point get_cursor() const { return text_plane.cursor; }
 };

@@ -71,6 +71,7 @@ struct ProgramState {
     }
 
     void register_initial_keybinds() {
+        // Arrow key handlers
         ncinput input = {.id = NCKEY_LEFT, .modifiers = 0};
         keybinds_table.register_handler(
             input, std::function<void()>(
@@ -90,16 +91,40 @@ struct ProgramState {
         keybinds_table.register_handler(
             input, std::function<void()>(
                        std::bind(&ProgramState::UP_ARROW_HANDLER, this)));
+
+        // Shift arrow key handlers
+        input = {.id = NCKEY_UP, .modifiers = NCKEY_MOD_SHIFT};
+        keybinds_table.register_handler(
+            input, std::function<void()>(
+                       std::bind(&ProgramState::SHIFT_UP_ARROW_HANDLER, this)));
+
+        input = {.id = NCKEY_DOWN, .modifiers = NCKEY_MOD_SHIFT};
+        keybinds_table.register_handler(
+            input, std::function<void()>(std::bind(
+                       &ProgramState::SHIFT_DOWN_ARROW_HANDLER, this)));
+
+        input = {.id = NCKEY_RIGHT, .modifiers = NCKEY_MOD_SHIFT};
+        keybinds_table.register_handler(
+            input, std::function<void()>(std::bind(
+                       &ProgramState::SHIFT_RIGHT_ARROW_HANDLER, this)));
+
+        input = {.id = NCKEY_LEFT, .modifiers = NCKEY_MOD_SHIFT};
+        keybinds_table.register_handler(
+            input, std::function<void()>(std::bind(
+                       &ProgramState::SHIFT_LEFT_ARROW_HANDLER, this)));
     }
 
   private:
+    //   Arrow handlers
     void LEFT_ARROW_HANDLER() { view.move_cursor_left(); }
-
     void RIGHT_ARROW_HANDLER() { view.move_cursor_right(); }
-
     void UP_ARROW_HANDLER() { view.move_cursor_up(); }
-
     void DOWN_ARROW_HANDLER() { view.move_cursor_down(); }
+
+    void SHIFT_LEFT_ARROW_HANDLER() { view.move_selector_left(); }
+    void SHIFT_RIGHT_ARROW_HANDLER() { view.move_selector_right(); }
+    void SHIFT_UP_ARROW_HANDLER() { view.move_selector_up(); }
+    void SHIFT_DOWN_ARROW_HANDLER() { view.move_selector_down(); }
 };
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
