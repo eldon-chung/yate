@@ -13,30 +13,95 @@
 // Program state
 struct ProgramState {
 
+    enum class Mode {
+        Text,
+        Cmd,
+    };
+
     KeyBinds keybinds_table;
 
     // The main states we maintain
     TextBuffer text_buffer;
     std::vector<std::string> clipboard;
 
+    // the cmd buff should be here
+    std::string cmd_buf;
+
     View view;
 
-    ProgramState() : view(std::move(View::init_view(&text_buffer))) {}
+    Mode mode;
+
+    ProgramState()
+        : view(std::move(View::init_view(&text_buffer, &cmd_buf))),
+          mode(Mode::Text) {}
     TextBuffer const &get_buffer() const { return text_buffer; }
 
-    // the main logic for handling keypresses is done here
     void handle_keypress(ncinput nc_input) {
+        switch (mode) {
+        case Mode::Text:
+            handle_keypress_text_mode(nc_input);
+            break;
+        case Mode::Cmd:
+            handle_keypress_cmd_mode(nc_input);
+            break;
+        default:
+            break;
+        }
+    }
+
+    void handle_keypress_cmd_mode(ncinput nc_input) {
+        // we're going to manually handle some cases to save on lookup
+        if (nc_input.modifiers == 0 &&
+            ((nc_input.id >= 32 && nc_input.id <= 255) ||
+             nc_input.id == NCKEY_TAB)) {
+
+            cmd_buf.insert(view.get_cmd_cursor(), 1, (char)nc_input.id);
+            view.move_cmd_cursor_right();
+            // should cursors be part of view or state?
+            return;
+        }
+
+        // TODO: handle all the other modifiers for these cases
+        if (nc_input.modifiers == 0 && nc_input.id == NCKEY_BACKSPACE) {
+            if (view.get_cmd_cursor() >= 1) {
+                cmd_buf.erase(view.get_cmd_cursor() - 1);
+                view.move_cmd_cursor_left();
+            }
+            return;
+        }
+
+        if (nc_input.modifiers == 0 && nc_input.id == NCKEY_ENTER) {
+            cmd_buf.clear();
+            view.move_cmd_cursor_to(0);
+            switch_mode();
+            return;
+        }
+
+        if (nc_input.modifiers == 0 && nc_input.id == NCKEY_DEL) {
+            if (view.get_cmd_cursor() < cmd_buf.size()) {
+                cmd_buf.erase(view.get_cmd_cursor());
+            }
+            return;
+        }
+
+        keybinds_table[nc_input]();
+    }
+
+    // the main logic for handling keypresses is done here
+    void handle_keypress_text_mode(ncinput nc_input) {
         // eventually this needs to work potentially
         // move than text_buffer
         // so it has to apply a function
 
-        // we're going to manually handled some cases to save on lookup
+        // we're going to manually handle some cases to save on lookup
         if (nc_input.modifiers == 0 &&
             ((nc_input.id >= 32 && nc_input.id <= 255) ||
              nc_input.id == NCKEY_TAB)) {
+
+            // hmm so is ProgramState the driver?
             text_buffer.insert_char_at(view.get_text_cursor(),
                                        (char)nc_input.id);
-            view.move_cursor_right();
+            view.move_text_cursor_right();
             return;
         }
 
@@ -44,15 +109,15 @@ struct ProgramState {
 
         // TODO: handle all the other modifiers for these cases
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_BACKSPACE) {
-            Point old_pos = view.get_cursor();
-            view.move_cursor_left();
+            Point old_pos = view.get_text_cursor();
+            view.move_text_cursor_left();
             text_buffer.insert_backspace_at(old_pos);
             return;
         }
 
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_ENTER) {
             text_buffer.insert_newline_at(view.get_text_cursor());
-            view.move_cursor_right();
+            view.move_text_cursor_right();
             return;
         }
 
@@ -69,8 +134,8 @@ struct ProgramState {
         while (true) {
             struct ncinput input = view.get_keypress();
 
-            // Ctrl P to return for now
-            if (input.id == 'P' && ncinput_ctrl_p(&input)) {
+            // Ctrl W to return for now
+            if (input.id == 'W' && ncinput_ctrl_p(&input)) {
                 return;
             }
 
@@ -137,19 +202,107 @@ struct ProgramState {
         keybinds_table.register_handler(
             input, std::function<void()>(
                        std::bind(&ProgramState::CTRL_V_HANDLER, this)));
+
+        // cmd palette
+        input = {.id = 'P', .modifiers = NCKEY_MOD_CTRL};
+        keybinds_table.register_handler(
+            input, std::function<void()>(
+                       std::bind(&ProgramState::CTRL_P_HANDLER, this)));
     }
 
   private:
     //   Arrow handlers
-    void LEFT_ARROW_HANDLER() { view.move_cursor_left(); }
-    void RIGHT_ARROW_HANDLER() { view.move_cursor_right(); }
-    void UP_ARROW_HANDLER() { view.move_cursor_up(); }
-    void DOWN_ARROW_HANDLER() { view.move_cursor_down(); }
+    void LEFT_ARROW_HANDLER() {
+        switch (mode) {
+        case Mode::Text:
+            view.move_text_cursor_left();
+            break;
+        case Mode::Cmd:
+            view.move_cmd_cursor_left();
+            break;
+        default:
+            break;
+        }
+    }
+    void RIGHT_ARROW_HANDLER() {
+        switch (mode) {
+        case Mode::Text:
+            view.move_text_cursor_right();
+            break;
+        case Mode::Cmd:
+            view.move_cmd_cursor_right();
+            break;
+        default:
+            break;
+        }
+    }
+    void UP_ARROW_HANDLER() {
+        switch (mode) {
+        case Mode::Text:
+            view.move_text_cursor_up();
+            break;
+        case Mode::Cmd:
+            break;
+        default:
+            break;
+        }
+    }
+    void DOWN_ARROW_HANDLER() {
+        switch (mode) {
+        case Mode::Text:
+            view.move_text_cursor_down();
+            break;
+        case Mode::Cmd:
+            break;
+        default:
+            break;
+        }
+    }
 
-    void SHIFT_LEFT_ARROW_HANDLER() { view.move_selector_left(); }
-    void SHIFT_RIGHT_ARROW_HANDLER() { view.move_selector_right(); }
-    void SHIFT_UP_ARROW_HANDLER() { view.move_selector_up(); }
-    void SHIFT_DOWN_ARROW_HANDLER() { view.move_selector_down(); }
+    void SHIFT_LEFT_ARROW_HANDLER() {
+        switch (mode) {
+        case Mode::Text:
+            view.move_selector_left();
+            break;
+        case Mode::Cmd:
+            break;
+        default:
+            break;
+        }
+    }
+    void SHIFT_RIGHT_ARROW_HANDLER() {
+        switch (mode) {
+        case Mode::Text:
+            view.move_selector_right();
+            break;
+        case Mode::Cmd:
+            break;
+        default:
+            break;
+        }
+    }
+    void SHIFT_UP_ARROW_HANDLER() {
+        switch (mode) {
+        case Mode::Text:
+            view.move_selector_up();
+            break;
+        case Mode::Cmd:
+            break;
+        default:
+            break;
+        }
+    }
+    void SHIFT_DOWN_ARROW_HANDLER() {
+        switch (mode) {
+        case Mode::Text:
+            view.move_selector_down();
+            break;
+        case Mode::Cmd:
+            break;
+        default:
+            break;
+        }
+    }
 
     // Clipboard manip
     void CTRL_C_HANDLER() {
@@ -184,10 +337,28 @@ struct ProgramState {
             text_buffer.remove_selection_at(lp, rp);
             view.move_cursor_to(lp);
         }
-        Point insertion_point = view.get_cursor();
+        Point insertion_point = view.get_text_cursor();
         Point final_point =
             text_buffer.insert_text_at(insertion_point, clipboard);
         view.move_cursor_to(final_point);
+    }
+
+    // Command Palette
+    void CTRL_P_HANDLER() { switch_mode(); }
+
+    // helpers
+    void switch_mode() {
+        switch (mode) {
+        case Mode::Text:
+            view.focus_cmd();
+            break;
+
+        case Mode::Cmd:
+            view.focus_text();
+            break;
+        }
+
+        mode = (mode == Mode::Text) ? Mode::Cmd : Mode::Text;
     }
 };
 
