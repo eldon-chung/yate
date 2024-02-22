@@ -1,3 +1,5 @@
+#include <signal.h>
+
 #include <assert.h>
 
 #include <iostream>
@@ -15,7 +17,7 @@ struct ProgramState {
 
     // The main states we maintain
     TextBuffer text_buffer;
-    std::string clipboard;
+    std::vector<std::string> clipboard;
 
     View view;
 
@@ -66,6 +68,12 @@ struct ProgramState {
 
         while (true) {
             struct ncinput input = view.get_keypress();
+
+            // Ctrl P to return for now
+            if (input.id == 'P' && ncinput_ctrl_p(&input)) {
+                return;
+            }
+
             handle_keypress(input);
             view.render();
         }
@@ -113,6 +121,22 @@ struct ProgramState {
         keybinds_table.register_handler(
             input, std::function<void()>(std::bind(
                        &ProgramState::SHIFT_LEFT_ARROW_HANDLER, this)));
+
+        // Clipboard manipulators
+        input = {.id = 'C', .modifiers = NCKEY_MOD_CTRL};
+        keybinds_table.register_handler(
+            input, std::function<void()>(
+                       std::bind(&ProgramState::CTRL_C_HANDLER, this)));
+
+        input = {.id = 'X', .modifiers = NCKEY_MOD_CTRL};
+        keybinds_table.register_handler(
+            input, std::function<void()>(
+                       std::bind(&ProgramState::CTRL_X_HANDLER, this)));
+
+        input = {.id = 'N', .modifiers = NCKEY_MOD_CTRL};
+        keybinds_table.register_handler(
+            input, std::function<void()>(
+                       std::bind(&ProgramState::CTRL_V_HANDLER, this)));
     }
 
   private:
@@ -126,6 +150,45 @@ struct ProgramState {
     void SHIFT_RIGHT_ARROW_HANDLER() { view.move_selector_right(); }
     void SHIFT_UP_ARROW_HANDLER() { view.move_selector_up(); }
     void SHIFT_DOWN_ARROW_HANDLER() { view.move_selector_down(); }
+
+    // Clipboard manip
+    void CTRL_C_HANDLER() {
+        if (view.in_selection_mode()) {
+            auto [lp, rp] = view.get_selection_points();
+            clipboard = text_buffer.get_lines(lp, rp);
+        } else {
+            // for now do nothing
+        }
+    }
+
+    void CTRL_X_HANDLER() {
+        if (view.in_selection_mode()) {
+            auto [lp, rp] = view.get_selection_points();
+            clipboard = text_buffer.get_lines(lp, rp);
+            text_buffer.remove_selection_at(lp, rp);
+            view.move_cursor_to(lp);
+        } else {
+            // for now do nothing
+        }
+
+        // quit selection mode
+    }
+
+    void CTRL_V_HANDLER() {
+        if (clipboard.empty()) {
+            return;
+        }
+
+        if (view.in_selection_mode()) {
+            auto [lp, rp] = view.get_selection_points();
+            text_buffer.remove_selection_at(lp, rp);
+            view.move_cursor_to(lp);
+        }
+        Point insertion_point = view.get_cursor();
+        Point final_point =
+            text_buffer.insert_text_at(insertion_point, clipboard);
+        view.move_cursor_to(final_point);
+    }
 };
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
@@ -135,4 +198,5 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
     program_state.register_initial_keybinds();
     program_state.run_event_loop();
+    return 0;
 }
