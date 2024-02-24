@@ -11,7 +11,20 @@ struct TextBuffer {
     std::vector<std::string> buffer;
 
   public:
-    TextBuffer() : buffer({""}) {}
+    TextBuffer() : buffer({""}) {
+    }
+
+    void load_contents(std::string_view contents) {
+        buffer.clear();
+        while (true) {
+            size_t newl_pos = contents.find('\n');
+            buffer.push_back(std::string{contents.substr(0, newl_pos)});
+            if (newl_pos == std::string::npos) {
+                break;
+            }
+            contents = contents.substr(newl_pos + 1);
+        }
+    }
 
     void insert_char_at(Point cursor, char c) {
         buffer.at(cursor.row).insert(cursor.col++, 1, c);
@@ -66,7 +79,9 @@ struct TextBuffer {
         return buffer.at(starting_row);
     }
 
-    size_t num_lines() const { return buffer.size(); }
+    size_t num_lines() const {
+        return buffer.size();
+    }
 
     std::vector<std::string> get_lines(Point lp, Point rp) {
         if (rp <= lp) {
@@ -152,7 +167,21 @@ struct TextBuffer {
         return final_insertion_point;
     }
 
-    void insert_text_at(Point point, char ch) { insert_text_at(point, {{ch}}); }
+    void insert_text_at(Point point, char ch) {
+        insert_text_at(point, {{ch}});
+    }
 
-    std::vector<std::string> at(size_t idx) const { return {buffer.at(idx)}; }
+    std::vector<std::string> get_nth_line(size_t idx) const {
+        return {buffer.at(idx)};
+    }
+
+    std::vector<std::string_view> get_view() const {
+        std::vector<std::string_view> to_ret;
+        to_ret.reserve(buffer.size());
+        for (auto const &line : buffer) {
+            to_ret.push_back(line);
+        }
+
+        return to_ret;
+    }
 };

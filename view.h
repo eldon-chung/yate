@@ -13,6 +13,8 @@
 #include "text_buffer.h"
 #include "util.h"
 
+#define BG_INITIALIZER(br, bg, bb) NCCHANNELS_INITIALIZER(0, 0, 0, br, bg, bb)
+
 class TextPlane {
     friend class View;
 
@@ -98,7 +100,8 @@ class TextPlane {
           cursor_plane_ptr(std::exchange(other.cursor_plane_ptr, nullptr)),
           wrap_status(other.wrap_status), tl_corner(other.tl_corner),
           br_corner(other.br_corner), cursor(other.cursor),
-          anchor_cursor(other.anchor_cursor) {}
+          anchor_cursor(other.anchor_cursor) {
+    }
     TextPlane &operator=(TextPlane const &) = delete;
     TextPlane &operator=(TextPlane &&other) {
         TextPlane temp{std::move(other)};
@@ -464,8 +467,12 @@ class TextPlane {
         }
     }
 
-    void set_anchor() { anchor_cursor = cursor; }
-    void unset_anchor() { anchor_cursor = std::nullopt; }
+    void set_anchor() {
+        anchor_cursor = cursor;
+    }
+    void unset_anchor() {
+        anchor_cursor = std::nullopt;
+    }
 
     Point move_point_down(Point const &p) const {
         Point to_return = p;
@@ -548,8 +555,12 @@ class TextPlane {
         return to_return;
     }
 
-    void hide_cursor() { ncplane_move_below(cursor_plane_ptr, plane_ptr); }
-    void show_cursor() { ncplane_move_above(cursor_plane_ptr, plane_ptr); }
+    void hide_cursor() {
+        ncplane_move_below(cursor_plane_ptr, plane_ptr);
+    }
+    void show_cursor() {
+        ncplane_move_above(cursor_plane_ptr, plane_ptr);
+    }
 };
 
 struct CommandPalettePlane {
@@ -558,27 +569,32 @@ struct CommandPalettePlane {
     ncplane *plane_ptr;
     ncplane *cursor_ptr;
     std::string const *cmd_str;
+    std::string const *prompt_str;
 
-    CommandPalettePlane(std::string const *cmd_ptr, ncplane *base_ptr, int y_,
-                        int x_, unsigned int num_cols)
-        : cursor_idx(0), cmd_str(cmd_ptr) {
+    CommandPalettePlane(std::string const *cmd_ptr,
+                        std::string const *prompt_ptr, ncplane *base_ptr,
+                        int y_, int x_, unsigned int num_cols)
+        : cursor_idx(0), cmd_str(cmd_ptr), prompt_str(prompt_ptr) {
+
+        assert(cmd_str);
+        assert(prompt_ptr);
 
         ncplane_options ncopts = {
             .y = y_, .x = x_, .rows = 1, .cols = num_cols};
         plane_ptr = ncplane_create(base_ptr, &ncopts);
 
         nccell cmd_palette_base_cell = {
-            .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 0, 253, 255)};
+            .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 102, 153, 153)};
 
         ncplane_set_base_cell(plane_ptr, &cmd_palette_base_cell);
 
         ncopts = {.y = 0, .x = 0, .rows = 1, .cols = 1};
         cursor_ptr = ncplane_create(plane_ptr, &ncopts);
 
-        cmd_palette_base_cell = {
+        nccell cursor_base_cell = {
             .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 255, 255, 255)};
 
-        ncplane_set_base_cell(cursor_ptr, &cmd_palette_base_cell);
+        ncplane_set_base_cell(cursor_ptr, &cursor_base_cell);
 
         hide_cursor();
     }
@@ -589,7 +605,8 @@ struct CommandPalettePlane {
         : cursor_idx(other.cursor_idx),
           plane_ptr(std::exchange(other.plane_ptr, nullptr)),
           cursor_ptr(std::exchange(other.cursor_ptr, nullptr)),
-          cmd_str(other.cmd_str) {}
+          cmd_str(other.cmd_str), prompt_str(other.prompt_str) {
+    }
 
     CommandPalettePlane &operator=(CommandPalettePlane &&other) {
         CommandPalettePlane temp{std::move(other)};
@@ -600,6 +617,7 @@ struct CommandPalettePlane {
     friend void swap(CommandPalettePlane &a, CommandPalettePlane &b) {
         using std::swap;
         swap(a.cmd_str, b.cmd_str);
+        swap(a.prompt_str, b.prompt_str);
         swap(a.cursor_idx, b.cursor_idx);
         swap(a.plane_ptr, b.plane_ptr);
         swap(a.cursor_ptr, b.cursor_ptr);
@@ -610,14 +628,49 @@ struct CommandPalettePlane {
         render_cursor();
     }
 
-    void render_cmd() {
+    void clear() {
+        hide_cursor();
         ncplane_erase(plane_ptr);
-        ncplane_putstr_yx(plane_ptr, 0, 0, cmd_str->c_str());
+        // ncplane_putnstr(plane_ptr, std::string::npos, " ");
     }
 
-    void render_cursor() { ncplane_move_yx(cursor_ptr, 0, (int)cursor_idx); }
-    void show_cursor() { ncplane_move_above(cursor_ptr, plane_ptr); }
-    void hide_cursor() { ncplane_move_below(cursor_ptr, plane_ptr); }
+    void notify(std::string_view notif) {
+        ncplane_erase(plane_ptr);
+        if (!notif.empty()) {
+            ncplane_putstr_yx(plane_ptr, 0, 0, notif.data());
+            // and style it
+            ncplane_stain(
+                plane_ptr, 0, 0, 1, (unsigned int)notif.size(),
+                BG_INITIALIZER(102, 102, 153), BG_INITIALIZER(102, 102, 153),
+                BG_INITIALIZER(102, 102, 153), BG_INITIALIZER(102, 102, 153));
+        }
+    }
+
+    void render_cmd() {
+        ncplane_erase(plane_ptr);
+        // first we putstr the prompt
+        if (!prompt_str->empty()) {
+            ncplane_putstr_yx(plane_ptr, 0, 0, prompt_str->c_str());
+            // and style it
+            ncplane_stain(
+                plane_ptr, 0, 0, 1, (unsigned int)prompt_str->size(),
+                BG_INITIALIZER(255, 255, 255), BG_INITIALIZER(255, 255, 255),
+                BG_INITIALIZER(255, 255, 255), BG_INITIALIZER(255, 255, 255));
+        }
+        if (!cmd_str->empty()) {
+            ncplane_putstr(plane_ptr, cmd_str->c_str());
+        }
+    }
+
+    void render_cursor() {
+        ncplane_move_yx(cursor_ptr, 0, (int)(cursor_idx + prompt_str->size()));
+    }
+    void show_cursor() {
+        ncplane_move_above(cursor_ptr, plane_ptr);
+    }
+    void hide_cursor() {
+        ncplane_move_below(cursor_ptr, plane_ptr);
+    }
 
     std::pair<unsigned, unsigned> get_plane_yx_dim() const {
         unsigned y, x;
@@ -638,9 +691,17 @@ struct CommandPalettePlane {
         }
     }
 
-    void move_cursor_to(size_t targ) { cursor_idx = targ; }
+    void move_cursor_to(size_t targ) {
+        cursor_idx = targ;
+    }
 
-    size_t cursor() const { return cursor_idx; }
+    void reset_cursor() {
+        cursor_idx = 0;
+    }
+
+    size_t cursor() const {
+        return cursor_idx;
+    }
 };
 
 class View {
@@ -655,7 +716,8 @@ class View {
 
     View(notcurses *nc, TextPlane t_plane, CommandPalettePlane c_plane)
         : nc_ptr(nc), text_plane(std::move(t_plane)),
-          cmd_plane(std::move(c_plane)), starting_row(0) {}
+          cmd_plane(std::move(c_plane)), starting_row(0) {
+    }
 
   public:
     View(View const &) = delete;
@@ -663,14 +725,17 @@ class View {
     View(View &&other)
         : nc_ptr(std::exchange(other.nc_ptr, nullptr)),
           text_plane(std::move(other.text_plane)),
-          cmd_plane(std::move(other.cmd_plane)) {}
+          cmd_plane(std::move(other.cmd_plane)) {
+    }
 
     View &operator=(View &&other) {
         View temp{std::move(other)};
         swap(*this, temp);
         return *this;
     }
-    ~View() { notcurses_stop(nc_ptr); }
+    ~View() {
+        notcurses_stop(nc_ptr);
+    }
 
     friend void swap(View &a, View &b) {
         using std::swap;
@@ -680,10 +745,13 @@ class View {
         swap(a.cmd_plane, b.cmd_plane);
     }
 
-    size_t get_starting_row() const { return starting_row; }
+    size_t get_starting_row() const {
+        return starting_row;
+    }
 
     static View &init_view(TextBuffer const *text_buffer_ptr,
-                           std::string const *cmd_ptr) {
+                           std::string const *cmd_ptr,
+                           std::string const *prompt_ptr) {
         // notcurses init
         static struct notcurses_options nc_options = {
             .flags = NCOPTION_SUPPRESS_BANNERS | NCOPTION_PRESERVE_CURSOR};
@@ -700,21 +768,35 @@ class View {
         // now create the UI elements
         static View view(
             nc_ptr, TextPlane(nc_ptr, text_buffer_ptr, num_rows - 1, num_cols),
-            CommandPalettePlane(cmd_ptr, std_plane_ptr, (int)num_rows - 2, 0,
-                                num_cols));
+            CommandPalettePlane(cmd_ptr, prompt_ptr, std_plane_ptr,
+                                (int)num_rows - 2, 0, num_cols));
         return view;
     }
 
-    void render() {
-
+    void render_text() {
         text_plane.render();
-
-        cmd_plane.render();
-
         notcurses_render(nc_ptr);
     }
 
-    notcurses *get_nc_ptr() const { return nc_ptr; }
+    void render_cmd() {
+        cmd_plane.render();
+        notcurses_render(nc_ptr);
+    }
+
+    void render_status() {
+        clear_cmd();
+        notcurses_render(nc_ptr);
+    }
+
+    void notify(std::string_view notif) {
+        cmd_plane.hide_cursor();
+        cmd_plane.notify(notif);
+        notcurses_render(nc_ptr);
+    }
+
+    notcurses *get_nc_ptr() const {
+        return nc_ptr;
+    }
 
     ncinput get_keypress() {
         struct ncinput nc_input;
@@ -824,11 +906,26 @@ class View {
     }
 
     // Cmd functionality
-    void move_cmd_cursor_left() { cmd_plane.move_cursor_left(); }
-    void move_cmd_cursor_to(size_t targ) { cmd_plane.move_cursor_to(targ); }
-    void move_cmd_cursor_right() { cmd_plane.move_cursor_right(); }
+    void reset_cmd_cursor() {
+        cmd_plane.reset_cursor();
+    }
+
+    void move_cmd_cursor_left() {
+        cmd_plane.move_cursor_left();
+    }
+    void move_cmd_cursor_to(size_t targ) {
+        cmd_plane.move_cursor_to(targ);
+    }
+    void move_cmd_cursor_right() {
+        cmd_plane.move_cursor_right();
+    }
 
     // Helper methods
+
+    void clear_cmd() {
+        cmd_plane.clear();
+    }
+
     void focus_cmd() {
         text_plane.hide_cursor();
         cmd_plane.show_cursor();
@@ -839,8 +936,12 @@ class View {
         text_plane.show_cursor();
     }
 
-    Point get_text_cursor() const { return text_plane.cursor; }
-    size_t get_cmd_cursor() const { return cmd_plane.cursor(); }
+    Point get_text_cursor() const {
+        return text_plane.cursor;
+    }
+    size_t get_cmd_cursor() const {
+        return cmd_plane.cursor();
+    }
 
     bool in_selection_mode() const {
         return text_plane.anchor_cursor.has_value();
