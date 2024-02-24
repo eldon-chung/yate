@@ -78,17 +78,6 @@ class TextPlane {
     }
 
     ~TextPlane() {
-        // do i not need to destroy these things?
-        // if (plane_ptr) {
-        //     ncplane_destroy(plane_ptr);
-        // }
-        // if (plane_ptr) {
-        //     ncplane_destroy(cursor_plane_ptr);
-        // }
-
-        // if (line_number_plane_ptr) {
-        //     ncplane_destroy(line_number_plane_ptr);
-        // }
     }
 
     TextPlane(TextPlane const &) = delete;
@@ -597,6 +586,8 @@ struct CommandPalettePlane {
         ncplane_set_base_cell(cursor_ptr, &cursor_base_cell);
 
         hide_cursor();
+    }
+    ~CommandPalettePlane() {
     }
 
     CommandPalettePlane(CommandPalettePlane const &) = delete;
