@@ -10,5 +10,4 @@ yate.o : main.cpp text_buffer.h view.h KeyBinds.h util.h File.h
 	$(CXX) -c $(CXXFLAGS) -o yate.o main.cpp
 
 debug: CXXFLAGS += -DDEBUG -g
-debug: CCFLAGS += -DDEBUG -g
 debug: yate

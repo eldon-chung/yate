@@ -44,8 +44,10 @@ class TextPlane {
         static const int num_digits = 4;
 
         // create the text_plane
-        ncplane_options text_plane_opts = {
-            .x = num_digits, .rows = num_rows, .cols = num_cols - num_digits};
+        ncplane_options text_plane_opts = {.x = num_digits,
+                                           .rows = num_rows,
+                                           .cols = num_cols - num_digits,
+                                           .name = "textplane"};
         plane_ptr =
             ncplane_create(notcurses_stdplane(nc_ptr), &text_plane_opts);
 
@@ -78,6 +80,18 @@ class TextPlane {
     }
 
     ~TextPlane() {
+
+        if (!line_number_plane_ptr) {
+            ncplane_destroy(line_number_plane_ptr); // let's try one
+        }
+
+        if (!cursor_plane_ptr) {
+            ncplane_destroy(cursor_plane_ptr); // let's try one
+        }
+
+        if (!plane_ptr) {
+            ncplane_destroy(plane_ptr); // let's try one
+        }
     }
 
     TextPlane(TextPlane const &) = delete;
@@ -588,6 +602,13 @@ struct CommandPalettePlane {
         hide_cursor();
     }
     ~CommandPalettePlane() {
+        if (!cursor_ptr) {
+            ncplane_destroy(cursor_ptr);
+        }
+
+        if (!plane_ptr) {
+            ncplane_destroy(plane_ptr);
+        }
     }
 
     CommandPalettePlane(CommandPalettePlane const &) = delete;
@@ -745,7 +766,9 @@ class View {
                            std::string const *prompt_ptr) {
         // notcurses init
         static struct notcurses_options nc_options = {
-            .flags = NCOPTION_SUPPRESS_BANNERS | NCOPTION_PRESERVE_CURSOR};
+            // .loglevel = NCLOGLEVEL_INFO,
+            .flags = NCOPTION_SUPPRESS_BANNERS | NCOPTION_PRESERVE_CURSOR,
+        };
         notcurses *nc_ptr = notcurses_init(&nc_options, nullptr);
         // disable the conversion into the signal
         notcurses_linesigs_disable(nc_ptr);

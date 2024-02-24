@@ -160,9 +160,6 @@ struct File {
                 ::write(fd, contents[idx].data(), contents[idx].size());
 
             if (ret_val == -1) {
-                std::cerr << "File: could not write to \"" << *filename;
-                std::cerr << "\" error message: " << strerror(errno)
-                          << std::endl;
                 return false;
             }
 
