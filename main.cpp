@@ -62,6 +62,8 @@ struct ProgramState {
         // prep the prompt buffer
         prompt_buf = prompt_str;
         if (!cmd_event_loop()) {
+            view.render_status();
+            view.focus_text();
             return std::nullopt;
         }
 
@@ -419,8 +421,6 @@ struct ProgramState {
         // After that's done:
         std::optional<std::string> response = prompt("Enter filename to open:");
         if (!response) {
-            view.render_status();
-            view.focus_text();
             return; // do nothing and return
         }
 
