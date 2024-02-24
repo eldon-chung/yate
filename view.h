@@ -568,19 +568,11 @@ class TextPlane {
 
 struct CommandPalettePlane {
     // 1024 has to be enough right!?
-    size_t cursor_idx;
     ncplane *plane_ptr;
     ncplane *cursor_ptr;
-    std::string const *cmd_str;
-    std::string const *prompt_str;
 
-    CommandPalettePlane(std::string const *cmd_ptr,
-                        std::string const *prompt_ptr, ncplane *base_ptr,
-                        int y_, int x_, unsigned int num_cols)
-        : cursor_idx(0), cmd_str(cmd_ptr), prompt_str(prompt_ptr) {
-
-        assert(cmd_str);
-        assert(prompt_ptr);
+    CommandPalettePlane(ncplane *base_ptr, int y_, int x_,
+                        unsigned int num_cols) {
 
         ncplane_options ncopts = {
             .y = y_, .x = x_, .rows = 1, .cols = num_cols};
@@ -614,10 +606,8 @@ struct CommandPalettePlane {
     CommandPalettePlane(CommandPalettePlane const &) = delete;
     CommandPalettePlane &operator=(CommandPalettePlane const &) = delete;
     CommandPalettePlane(CommandPalettePlane &&other)
-        : cursor_idx(other.cursor_idx),
-          plane_ptr(std::exchange(other.plane_ptr, nullptr)),
-          cursor_ptr(std::exchange(other.cursor_ptr, nullptr)),
-          cmd_str(other.cmd_str), prompt_str(other.prompt_str) {
+        : plane_ptr(std::exchange(other.plane_ptr, nullptr)),
+          cursor_ptr(std::exchange(other.cursor_ptr, nullptr)) {
     }
 
     CommandPalettePlane &operator=(CommandPalettePlane &&other) {
@@ -628,16 +618,14 @@ struct CommandPalettePlane {
 
     friend void swap(CommandPalettePlane &a, CommandPalettePlane &b) {
         using std::swap;
-        swap(a.cmd_str, b.cmd_str);
-        swap(a.prompt_str, b.prompt_str);
-        swap(a.cursor_idx, b.cursor_idx);
         swap(a.plane_ptr, b.plane_ptr);
         swap(a.cursor_ptr, b.cursor_ptr);
     }
 
-    void render() {
-        render_cmd();
-        render_cursor();
+    void render(std::string_view prompt_str, std::string_view cmd_str,
+                size_t cursor) {
+        render_cmd(prompt_str, cmd_str);
+        render_cursor(prompt_str, cursor);
     }
 
     void clear() {
@@ -658,24 +646,24 @@ struct CommandPalettePlane {
         }
     }
 
-    void render_cmd() {
+    void render_cmd(std::string_view prompt_str, std::string_view cmd_str) {
         ncplane_erase(plane_ptr);
         // first we putstr the prompt
-        if (!prompt_str->empty()) {
-            ncplane_putstr_yx(plane_ptr, 0, 0, prompt_str->c_str());
+        if (!prompt_str.empty()) {
+            ncplane_putstr_yx(plane_ptr, 0, 0, prompt_str.data());
             // and style it
             ncplane_stain(
-                plane_ptr, 0, 0, 1, (unsigned int)prompt_str->size(),
+                plane_ptr, 0, 0, 1, (unsigned int)prompt_str.size(),
                 BG_INITIALIZER(255, 255, 255), BG_INITIALIZER(255, 255, 255),
                 BG_INITIALIZER(255, 255, 255), BG_INITIALIZER(255, 255, 255));
         }
-        if (!cmd_str->empty()) {
-            ncplane_putstr(plane_ptr, cmd_str->c_str());
+        if (!cmd_str.empty()) {
+            ncplane_putstr(plane_ptr, cmd_str.data());
         }
     }
 
-    void render_cursor() {
-        ncplane_move_yx(cursor_ptr, 0, (int)(cursor_idx + prompt_str->size()));
+    void render_cursor(std::string_view prompt_str, size_t cursor) {
+        ncplane_move_yx(cursor_ptr, 0, (int)(cursor + prompt_str.size()));
     }
     void show_cursor() {
         ncplane_move_above(cursor_ptr, plane_ptr);
@@ -688,31 +676,6 @@ struct CommandPalettePlane {
         unsigned y, x;
         ncplane_dim_yx(plane_ptr, &y, &x);
         return {y, x};
-    }
-
-    // Manipulation functions
-    // eventually have history?
-    void move_cursor_left() {
-        if (cursor_idx > 0) {
-            --cursor_idx;
-        }
-    }
-    void move_cursor_right() {
-        if (cursor_idx < cmd_str->size() && cursor_idx < 1023) {
-            ++cursor_idx;
-        }
-    }
-
-    void move_cursor_to(size_t targ) {
-        cursor_idx = targ;
-    }
-
-    void reset_cursor() {
-        cursor_idx = 0;
-    }
-
-    size_t cursor() const {
-        return cursor_idx;
     }
 };
 
@@ -761,9 +724,7 @@ class View {
         return starting_row;
     }
 
-    static View &init_view(TextBuffer const *text_buffer_ptr,
-                           std::string const *cmd_ptr,
-                           std::string const *prompt_ptr) {
+    static View &init_view(TextBuffer const *text_buffer_ptr) {
         // notcurses init
         static struct notcurses_options nc_options = {
             // .loglevel = NCLOGLEVEL_INFO,
@@ -782,8 +743,7 @@ class View {
         // now create the UI elements
         static View view(
             nc_ptr, TextPlane(nc_ptr, text_buffer_ptr, num_rows - 1, num_cols),
-            CommandPalettePlane(cmd_ptr, prompt_ptr, std_plane_ptr,
-                                (int)num_rows - 2, 0, num_cols));
+            CommandPalettePlane(std_plane_ptr, (int)num_rows - 2, 0, num_cols));
         return view;
     }
 
@@ -792,8 +752,9 @@ class View {
         notcurses_render(nc_ptr);
     }
 
-    void render_cmd() {
-        cmd_plane.render();
+    void render_cmd(std::string_view prompt_str, std::string_view cmd_str,
+                    size_t cursor) {
+        cmd_plane.render(prompt_str, cmd_str, cursor);
         notcurses_render(nc_ptr);
     }
 
@@ -920,19 +881,6 @@ class View {
     }
 
     // Cmd functionality
-    void reset_cmd_cursor() {
-        cmd_plane.reset_cursor();
-    }
-
-    void move_cmd_cursor_left() {
-        cmd_plane.move_cursor_left();
-    }
-    void move_cmd_cursor_to(size_t targ) {
-        cmd_plane.move_cursor_to(targ);
-    }
-    void move_cmd_cursor_right() {
-        cmd_plane.move_cursor_right();
-    }
 
     // Helper methods
 
@@ -952,9 +900,6 @@ class View {
 
     Point get_text_cursor() const {
         return text_plane.cursor;
-    }
-    size_t get_cmd_cursor() const {
-        return cmd_plane.cursor();
     }
 
     bool in_selection_mode() const {

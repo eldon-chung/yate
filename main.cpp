@@ -24,13 +24,13 @@ struct ProgramState {
     // the cmd buff should be here
     std::string cmd_buf;
     std::string prompt_buf;
+    size_t cmd_cursor;
 
     View view;
 
     ProgramState(std::optional<std::string_view> maybe_filename)
         : file(), text_buffer(), cmd_buf(""), prompt_buf(""),
-          view(
-              std::move(View::init_view(&text_buffer, &cmd_buf, &prompt_buf))) {
+          view(std::move(View::init_view(&text_buffer))) {
         // deal with the file nonsense now that everything's set up
         // so we can have error messaging etc
         if (!maybe_filename) {
@@ -73,14 +73,14 @@ struct ProgramState {
     }
 
     bool cmd_event_loop() {
-        view.render_cmd();
+        view.render_cmd(prompt_buf, cmd_buf, cmd_cursor);
         while (true) {
             struct ncinput input = view.get_keypress();
 
             // Ctrl C to quit prompt mode
             if (input.id == 'C' && ncinput_ctrl_p(&input)) {
                 // clear the prompt and buf, and reset the cursor
-                view.reset_cmd_cursor();
+                cmd_cursor = 0;
                 cmd_buf.clear();
                 prompt_buf.clear();
                 return false; // return empty string
@@ -94,7 +94,7 @@ struct ProgramState {
             // should we just make a prompt_render
             // and a text_render? and make prompt_buf a local?
             // TODO: save that for next refactor
-            view.render_cmd();
+            view.render_cmd(prompt_buf, cmd_buf, cmd_cursor);
         }
     }
 
@@ -104,29 +104,29 @@ struct ProgramState {
             ((nc_input.id >= 32 && nc_input.id <= 255) ||
              nc_input.id == NCKEY_TAB)) {
 
-            cmd_buf.insert(view.get_cmd_cursor(), 1, (char)nc_input.id);
-            view.move_cmd_cursor_right();
+            cmd_buf.insert(cmd_cursor, 1, (char)nc_input.id);
+            move_cmd_cursor_right();
             // should cursors be part of view or state?
             return false;
         }
 
         // TODO: handle all the other modifiers for these cases
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_BACKSPACE) {
-            if (view.get_cmd_cursor() >= 1) {
-                cmd_buf.erase(view.get_cmd_cursor() - 1);
-                view.move_cmd_cursor_left();
+            if (cmd_cursor >= 1) {
+                cmd_buf.erase(cmd_cursor - 1);
+                move_cmd_cursor_left();
             }
             return false;
         }
 
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_ENTER) {
-            view.move_cmd_cursor_to(0);
+            cmd_cursor = 0;
             return true;
         }
 
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_DEL) {
-            if (view.get_cmd_cursor() < cmd_buf.size()) {
-                cmd_buf.erase(view.get_cmd_cursor());
+            if (cmd_cursor < cmd_buf.size()) {
+                cmd_buf.erase(cmd_cursor);
             }
             return false;
         }
@@ -134,10 +134,10 @@ struct ProgramState {
         // arrow keys here
         switch (nc_input.id) {
         case NCKEY_LEFT:
-            view.move_cmd_cursor_left();
+            move_cmd_cursor_left();
             break;
         case NCKEY_RIGHT:
-            view.move_cmd_cursor_right();
+            move_cmd_cursor_right();
             break;
         default:
             break;
@@ -440,6 +440,19 @@ struct ProgramState {
     }
 
     // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>  END HANDLERS
+
+    // Cmd Helpers
+    void move_cmd_cursor_left() {
+        if (cmd_cursor > 0) {
+            --cmd_cursor;
+        }
+    }
+
+    void move_cmd_cursor_right() {
+        if (cmd_cursor < cmd_buf.size()) {
+            ++cmd_cursor;
+        }
+    }
 };
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
