@@ -419,6 +419,8 @@ struct ProgramState {
         // After that's done:
         std::optional<std::string> response = prompt("Enter filename to open:");
         if (!response) {
+            view.render_status();
+            view.focus_text();
             return; // do nothing and return
         }
 
