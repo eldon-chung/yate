@@ -447,10 +447,10 @@ struct ProgramState {
         if (maybe_anchor_point) {
             auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
             text_buffer.remove_text_at(lp, rp);
-            view.chase_point(lp);
+            text_cursor = lp;
+            view.chase_point(text_cursor);
         }
-        Point insertion_point = text_cursor;
-        text_cursor = text_buffer.insert_text_at(insertion_point, clipboard);
+        text_cursor = text_buffer.insert_text_at(text_cursor, clipboard);
         maybe_anchor_point.reset();
         view.chase_point(text_cursor);
     }
