@@ -19,6 +19,9 @@ struct ProgramState {
 
     // The main states we maintain
     TextBuffer text_buffer;
+    Point text_cursor;
+    std::optional<Point> maybe_anchor_point;
+
     std::vector<std::string> clipboard;
 
     // the cmd buff should be here
@@ -29,8 +32,12 @@ struct ProgramState {
     View view;
 
     ProgramState(std::optional<std::string_view> maybe_filename)
-        : file(), text_buffer(), cmd_buf(""), prompt_buf(""),
-          view(std::move(View::init_view(&text_buffer))) {
+        : file(),
+          text_buffer(),
+          cmd_buf(""),
+          prompt_buf(""),
+          view(std::move(View::init_view(TextPlaneModel{
+              &text_buffer, &text_cursor, &maybe_anchor_point}))) {
         // deal with the file nonsense now that everything's set up
         // so we can have error messaging etc
         if (!maybe_filename) {
@@ -158,10 +165,15 @@ struct ProgramState {
             ((nc_input.id >= 32 && nc_input.id <= 255) ||
              nc_input.id == NCKEY_TAB)) {
 
-            // hmm so is ProgramState the driver?
-            text_buffer.insert_char_at(view.get_text_cursor(),
-                                       (char)nc_input.id);
-            view.move_text_cursor_right();
+            if (maybe_anchor_point) {
+                auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
+                text_buffer.remove_text_at(lp, rp);
+                text_cursor = lp;
+                maybe_anchor_point.reset();
+            }
+            text_buffer.insert_char_at(text_cursor, (char)nc_input.id);
+            RIGHT_ARROW_HANDLER();
+            view.chase_point(text_cursor);
             return;
         }
 
@@ -169,22 +181,46 @@ struct ProgramState {
 
         // TODO: handle all the other modifiers for these cases
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_BACKSPACE) {
-            Point old_pos = view.get_text_cursor();
-            view.move_text_cursor_left();
-            text_buffer.insert_backspace_at(old_pos);
+            if (maybe_anchor_point) {
+                auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
+                text_buffer.remove_text_at(lp, rp);
+                text_cursor = lp;
+                maybe_anchor_point.reset();
+            } else {
+                Point old_pos = text_cursor;
+                LEFT_ARROW_HANDLER();
+                text_buffer.insert_backspace_at(old_pos);
+            }
+            view.chase_point(text_cursor);
             return;
         }
 
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_ENTER) {
-            text_buffer.insert_newline_at(view.get_text_cursor());
-            view.move_text_cursor_right();
+            if (maybe_anchor_point) {
+                auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
+                text_buffer.remove_text_at(lp, rp);
+                text_cursor = lp;
+                maybe_anchor_point.reset();
+            }
+            text_buffer.insert_newline_at(text_cursor);
+            RIGHT_ARROW_HANDLER();
+            view.chase_point(text_cursor);
             return;
         }
 
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_DEL) {
-            text_buffer.insert_delete_at(view.get_text_cursor());
+            if (maybe_anchor_point) {
+                auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
+                text_buffer.remove_text_at(lp, rp);
+                text_cursor = lp;
+                maybe_anchor_point.reset();
+            } else {
+                text_buffer.insert_delete_at(text_cursor);
+            }
+            view.chase_point(text_cursor);
             return;
         }
+
         keybinds_table[nc_input]();
     }
 
@@ -289,41 +325,97 @@ struct ProgramState {
     // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>  START HANDLERS
     //   Arrow handlers
     void LEFT_ARROW_HANDLER() {
-        view.move_text_cursor_left();
+        if (maybe_anchor_point) {
+            text_cursor = std::min(text_cursor, *maybe_anchor_point);
+            maybe_anchor_point.reset();
+        } else {
+            text_cursor = move_point_left(text_cursor);
+        }
+        view.chase_point(text_cursor);
     }
     void RIGHT_ARROW_HANDLER() {
-
-        view.move_text_cursor_right();
+        if (maybe_anchor_point) {
+            text_cursor = std::max(text_cursor, *maybe_anchor_point);
+            maybe_anchor_point.reset();
+        } else {
+            text_cursor = move_point_right(text_cursor);
+        }
+        view.chase_point(text_cursor);
     }
     void UP_ARROW_HANDLER() {
-
-        view.move_text_cursor_up();
+        if (maybe_anchor_point) {
+            text_cursor = std::min(text_cursor, *maybe_anchor_point);
+            maybe_anchor_point.reset();
+        }
+        text_cursor = move_point_up(text_cursor);
+        view.chase_point(text_cursor);
     }
     void DOWN_ARROW_HANDLER() {
-
-        view.move_text_cursor_down();
+        if (maybe_anchor_point) {
+            text_cursor = std::max(text_cursor, *maybe_anchor_point);
+            maybe_anchor_point.reset();
+        }
+        text_cursor = move_point_down(text_cursor);
+        view.chase_point(text_cursor);
     }
 
     void SHIFT_LEFT_ARROW_HANDLER() {
+        if (!maybe_anchor_point) {
+            maybe_anchor_point = text_cursor;
+        }
 
-        view.move_selector_left();
+        text_cursor = move_point_left(text_cursor);
+        view.chase_point(text_cursor);
+
+        assert(maybe_anchor_point);
+        if (*maybe_anchor_point == text_cursor) {
+            maybe_anchor_point.reset();
+        }
     }
     void SHIFT_RIGHT_ARROW_HANDLER() {
+        if (!maybe_anchor_point) {
+            maybe_anchor_point = text_cursor;
+        }
 
-        view.move_selector_right();
+        text_cursor = move_point_right(text_cursor);
+        view.chase_point(text_cursor);
+
+        assert(maybe_anchor_point);
+        if (*maybe_anchor_point == text_cursor) {
+            maybe_anchor_point.reset();
+        }
     }
     void SHIFT_UP_ARROW_HANDLER() {
+        if (!maybe_anchor_point) {
+            maybe_anchor_point = text_cursor;
+        }
 
-        view.move_selector_up();
+        text_cursor = move_point_up(text_cursor);
+        view.chase_point(text_cursor);
+
+        assert(maybe_anchor_point);
+        if (*maybe_anchor_point == text_cursor) {
+            maybe_anchor_point.reset();
+        }
     }
     void SHIFT_DOWN_ARROW_HANDLER() {
-        view.move_selector_down();
+        if (!maybe_anchor_point) {
+            maybe_anchor_point = text_cursor;
+        }
+
+        text_cursor = move_point_down(text_cursor);
+        view.chase_point(text_cursor);
+
+        assert(maybe_anchor_point);
+        if (*maybe_anchor_point == text_cursor) {
+            maybe_anchor_point.reset();
+        }
     }
 
     // Clipboard manip
     void CTRL_C_HANDLER() {
-        if (view.in_selection_mode()) {
-            auto [lp, rp] = view.get_selection_points();
+        if (maybe_anchor_point) {
+            auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
             clipboard = text_buffer.get_lines(lp, rp);
         } else {
             // for now do nothing
@@ -331,11 +423,13 @@ struct ProgramState {
     }
 
     void CTRL_X_HANDLER() {
-        if (view.in_selection_mode()) {
-            auto [lp, rp] = view.get_selection_points();
+        if (maybe_anchor_point) {
+            auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
             clipboard = text_buffer.get_lines(lp, rp);
-            text_buffer.remove_selection_at(lp, rp);
-            view.move_cursor_to(lp);
+            text_buffer.remove_text_at(lp, rp);
+            text_cursor = lp;
+            maybe_anchor_point.reset();
+            view.chase_point(lp);
         } else {
             // for now do nothing
         }
@@ -348,15 +442,15 @@ struct ProgramState {
             return;
         }
 
-        if (view.in_selection_mode()) {
-            auto [lp, rp] = view.get_selection_points();
-            text_buffer.remove_selection_at(lp, rp);
-            view.move_cursor_to(lp);
+        if (maybe_anchor_point) {
+            auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
+            text_buffer.remove_text_at(lp, rp);
+            view.chase_point(lp);
         }
-        Point insertion_point = view.get_text_cursor();
-        Point final_point =
-            text_buffer.insert_text_at(insertion_point, clipboard);
-        view.move_cursor_to(final_point);
+        Point insertion_point = text_cursor;
+        text_cursor = text_buffer.insert_text_at(insertion_point, clipboard);
+        maybe_anchor_point.reset();
+        view.chase_point(text_cursor);
     }
 
     // Command Palette
@@ -452,6 +546,90 @@ struct ProgramState {
         if (cmd_cursor < cmd_buf.size()) {
             ++cmd_cursor;
         }
+    }
+
+    Point move_point_left(Point const &p) const {
+        Point to_return = p;
+        // update logical cursor
+        if (to_return.col > 0) {
+            --to_return.col;
+        } else if (to_return.row > 0) {
+            to_return.col = text_buffer.at(--to_return.row).size();
+        }
+        return to_return;
+    }
+
+    // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Point Helpers
+    Point move_point_right(Point const &p) const {
+        Point to_return = p;
+        if (to_return.col == text_buffer.at(to_return.row).size() &&
+            to_return.row + 1 < text_buffer.num_lines()) {
+            // move down one line
+            to_return.col = 0;
+            ++to_return.row;
+        } else if (to_return.col < text_buffer.at(to_return.row).size()) {
+            ++to_return.col;
+        }
+        return to_return;
+    }
+
+    Point move_point_up(Point const &p) const {
+        Point to_return = p;
+        if (view.get_wrap_status() == WrapStatus::WRAP) {
+            auto [num_rows, num_cols] = view.get_text_plane_dim();
+            if (to_return.col >= num_cols) {
+                to_return.col -= num_cols;
+            } else if (to_return.row > 0) {
+                --to_return.row;
+                size_t line_size = text_buffer.at(to_return.row).size();
+                size_t last_chunk_col = line_size / num_cols * line_size;
+                assert(to_return.col < num_cols);
+                to_return.col =
+                    std::min(to_return.col + last_chunk_col, line_size);
+            } else if (to_return.row == 0) {
+                to_return.col = 0;
+            }
+        } else {
+            // non-wrapping movement
+            to_return.col =
+                std::min(to_return.col, text_buffer.at(--to_return.row).size());
+        }
+
+        return to_return;
+    }
+
+    Point move_point_down(Point const &p) const {
+        Point to_return = p;
+        if (view.get_wrap_status() == WrapStatus::WRAP) {
+            auto [num_rows, num_cols] = view.get_text_plane_dim();
+            size_t curr_line_size = text_buffer.at(to_return.row).size();
+
+            if (curr_line_size == 0) {
+                to_return.col = 0;
+                to_return.row =
+                    std::min(text_buffer.num_lines() - 1, to_return.row + 1);
+            } else if ((to_return.col / curr_line_size * curr_line_size) +
+                           num_cols <=
+                       curr_line_size) {
+                to_return.col =
+                    std::min(to_return.col + num_cols, curr_line_size);
+            } else if (to_return.row + 1 == text_buffer.num_lines()) {
+                to_return.col = text_buffer.at(to_return.row).size();
+            } else if (to_return.row + 1 < text_buffer.num_lines()) {
+                ++to_return.row;
+                to_return.col = std::min(to_return.col,
+                                         text_buffer.at(to_return.row).size());
+            }
+        } else {
+            // non-wrapping movement
+            if (to_return.row + 1 < text_buffer.num_lines()) {
+                ++to_return.row;
+                to_return.col = std::min(to_return.col,
+                                         text_buffer.at(to_return.row).size());
+            }
+        }
+
+        return to_return;
     }
 };
 

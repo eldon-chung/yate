@@ -11,7 +11,8 @@ struct TextBuffer {
     std::vector<std::string> buffer;
 
   public:
-    TextBuffer() : buffer({""}) {
+    TextBuffer()
+        : buffer({""}) {
     }
 
     void load_contents(std::string_view contents) {
@@ -75,7 +76,7 @@ struct TextBuffer {
         return to_ret;
     }
 
-    std::string_view get_line_at(size_t starting_row) const {
+    std::string_view at(size_t starting_row) const {
         return buffer.at(starting_row);
     }
 
@@ -118,7 +119,12 @@ struct TextBuffer {
         return to_return;
     }
 
-    void remove_selection_at(Point lp, Point rp) {
+    Point replace_text_at(Point lp, Point rp, std::vector<std::string> lines) {
+        remove_text_at(lp, rp);
+        return insert_text_at(lp, std::move(lines));
+    }
+
+    void remove_text_at(Point lp, Point rp) {
 
         if (lp.row == rp.row) {
             std::string right_half = buffer.at(lp.row).substr(rp.col);
