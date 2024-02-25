@@ -46,10 +46,12 @@ struct ProgramState {
 
         assert(maybe_filename);
         file = File(*maybe_filename);
-        if (file.has_errmsg()) {
+        if (!file.is_open()) {
             // show the error message in the status
             // for now we print:
-            std::cerr << file.get_errmsg() << std::endl;
+            if (file.has_errmsg()) {
+                view.notify(file.get_errmsg());
+            }
         } else {
             assert(file.is_open());
             text_buffer.load_contents(file.get_file_contents());
@@ -468,28 +470,35 @@ struct ProgramState {
 
     // Nano's keybind for saving files
     void CTRL_O_HANDLER() {
+        std::string name_to_open;
         if (!file.has_filename()) {
-            // at this point we need to prompt the user for a filename:
-            // TODO: a prompt UI element? can be merged with cmd UI element
-
             std::optional<std::string> response =
                 prompt("Enter filename to save to:");
             if (!response.has_value()) {
                 return;
+            } else {
+                name_to_open = std::move(*response);
             }
+        } else {
+            assert(file.has_filename());
+            name_to_open = file.get_filename();
+        }
 
+        // if file isn't open we try opening
+        if (!file.is_open()) {
             bool created;
-            std::tie(file, created) = File::create_if_not_exists(*response);
+            std::tie(file, created) = File::create_if_not_exists(name_to_open);
+
             if (!created) {
                 // warn user about overwriting
-                response = prompt("Overwrite file contents? [y/N]");
-
-                if (response.value_or("n") != "y") {
+                if (prompt("Overwrite file contents? [y/N]").value_or("n") !=
+                    "y") {
                     return; // don't save
                 }
             }
         }
 
+        // if it still isn't open we report the error
         if (!file.is_open()) {
             // tell the user what the error is and clear off the file?
             view.notify(file.get_errmsg());

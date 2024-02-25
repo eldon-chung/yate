@@ -18,16 +18,23 @@ struct File {
     bool in_ro_mode;
 
     File(std::string_view fn, int fd_, std::optional<std::string> em, bool irm)
-        : filename(fn), fd(fd_), errmsg(em), in_ro_mode(irm) {
+        : filename(fn),
+          fd(fd_),
+          errmsg(em),
+          in_ro_mode(irm) {
     }
 
   public:
     File()
-        : filename(std::nullopt), fd(-1), errmsg(std::nullopt),
+        : filename(std::nullopt),
+          fd(-1),
+          errmsg(std::nullopt),
           in_ro_mode(false) {
     }
 
-    File(std::string_view fn) : filename(fn), in_ro_mode(false) {
+    File(std::string_view fn)
+        : filename(fn),
+          in_ro_mode(false) {
         // not a creating open. we can assign filenames first
         // if the file doesnt exist we only create it when
         // writing
@@ -59,8 +66,10 @@ struct File {
     File &operator=(File &) = delete;
 
     File(File &&other)
-        : filename(std::move(other.filename)), fd(std::exchange(other.fd, -1)),
-          errmsg(std::move(other.errmsg)), in_ro_mode(other.in_ro_mode) {
+        : filename(std::move(other.filename)),
+          fd(std::exchange(other.fd, -1)),
+          errmsg(std::move(other.errmsg)),
+          in_ro_mode(other.in_ro_mode) {
     }
 
     File &operator=(File &&other) {
@@ -128,7 +137,6 @@ struct File {
     }
 
     bool write(std::vector<std::string_view> contents) {
-
         if (in_ro_mode) {
             errmsg = "Can't write to file in read-only mode";
             return false;
@@ -190,6 +198,10 @@ struct File {
 
     bool has_filename() const {
         return filename.has_value();
+    }
+
+    std::string_view get_filename() const {
+        return filename.value();
     }
 
     bool has_errmsg() const {
