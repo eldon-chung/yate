@@ -266,6 +266,7 @@ class TextPlane {
                                    (int)visual_col_l, 1,
                                    (unsigned int)(visual_col_r - visual_col_l),
                                    NCSTYLE_UNDERLINE);
+                    // TODO: show '⏎' when the selection crosses a newline?
                 }
             }
 
@@ -283,6 +284,8 @@ class TextPlane {
     }
 
     void render_line_numbers(std::vector<size_t> const &row_idxs) {
+        // TODO: on the first number, indicate if there's more to that line
+        // being wrapped from the previous visual row
         ncplane_erase(line_number_plane_ptr);
         char out_str[5];
         for (size_t idx = 0; idx < row_idxs.size(); ++idx) {
