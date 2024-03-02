@@ -33,14 +33,14 @@ struct StateReturn {
         EXIT,
     };
     Transition transition_type;
-    std::shared_ptr<ProgramState> next_state;
+    ProgramState *next_state_ptr;
 
     using enum Transition;
 
     StateReturn()
         : event_handled(true),
           transition_type(REMAIN),
-          next_state(nullptr) {
+          next_state_ptr(nullptr) {
     }
 
     StateReturn(Transition tt)
@@ -50,7 +50,7 @@ struct StateReturn {
 
     StateReturn(ProgramState *ns)
         : transition_type(ENTER),
-          next_state(ns) {
+          next_state_ptr(ns) {
     }
 
     StateReturn(bool eh)
@@ -133,8 +133,9 @@ class PromptState;
 class ProgramState {
 
   protected:
-    inline static View *vp;
-    View *view_ptr;
+    inline static View *view_ptr;
+    inline static EventQueue *event_queue_ptr;
+    // View *view_ptr;
     KeyBinds keybinds_table;
 
     // TODO: add a callback for cleanup after prompts?
@@ -144,11 +145,14 @@ class ProgramState {
   public:
     //   Note: Do this before anything else
     static void set_view_ptr(View *vp_) {
-        vp = vp_;
+        view_ptr = vp_;
     }
 
-    ProgramState()
-        : view_ptr(vp) {
+    static void set_eq_ptr(EventQueue *eq_) {
+        event_queue_ptr = eq_;
+    }
+
+    ProgramState() {
     }
 
     virtual ~ProgramState() {
@@ -176,6 +180,262 @@ class ProgramState {
     }
 };
 
+class PromptState : public ProgramState {
+    // stuff for prompting
+
+    // place the response when we quit here
+    bool has_response;
+    std::string target_str;
+    std::string prompt_str;
+    size_t cursor;
+    std::string cmd_buf;
+
+  public:
+    PromptState()
+        : ProgramState() {
+    }
+
+    StateReturn handle_msg([[maybe_unused]] std::string_view msg) {
+        // nothing to do rn
+        return StateReturn();
+    }
+
+    void enter() {
+        has_response = false;
+        cmd_buf.clear();
+        cursor = 0;
+    }
+
+    void exit() {
+        prompt_str.clear();
+        // remove the ptr
+        std::string to_send = target_str;
+        to_send += ":";
+        if (has_response) {
+            to_send += "str=";
+            to_send += cmd_buf;
+        }
+        event_queue_ptr->post_message(to_send);
+
+        cmd_buf.clear();
+        prompt_str.clear();
+        cursor = 0;
+    }
+
+    void register_keybinds() {
+        // nothing here right now
+    }
+
+    void setup(std::string_view ps, std::string_view target) {
+        prompt_str = ps;
+        target_str = target;
+    }
+
+    PromptPlaneModel get_prompt_plane_model() {
+        return PromptPlaneModel{&prompt_str, &cursor, &cmd_buf};
+    }
+
+    StateReturn handle_input(ncinput nc_input) {
+        auto move_cursor_left = [&]() {
+            if (cursor > 0) {
+                --cursor;
+            }
+        };
+
+        auto move_cursor_right = [&]() {
+            if (cursor < cmd_buf.size()) {
+                ++cursor;
+            }
+        };
+
+        view_ptr->focus_cmd();
+
+        if (nc_input.modifiers == 0 &&
+            ((nc_input.id >= 32 && nc_input.id <= 255) ||
+             nc_input.id == NCKEY_TAB)) {
+
+            cmd_buf.insert(cursor, 1, (char)nc_input.id);
+            move_cursor_right();
+            // should cursors be part of view or state?
+            return StateReturn();
+        }
+
+        // TODO: handle all the other modifiers for these cases
+        if (nc_input.modifiers == 0 && nc_input.id == NCKEY_BACKSPACE) {
+            if (cursor >= 1) {
+                cmd_buf.erase(cursor - 1);
+                move_cursor_left();
+            }
+            return StateReturn();
+        }
+
+        if (nc_input.modifiers == 0 && nc_input.id == NCKEY_DEL) {
+            if (cursor < cmd_buf.size()) {
+                cmd_buf.erase(cursor);
+            }
+            return StateReturn();
+        }
+
+        // arrow keys here
+        switch (nc_input.id) {
+        case NCKEY_LEFT:
+            move_cursor_left();
+            return StateReturn();
+        case NCKEY_RIGHT:
+            move_cursor_right();
+            return StateReturn();
+        default:
+            break;
+        }
+
+        if (nc_input.modifiers == 0 && nc_input.id == NCKEY_ENTER) {
+            // TODO: Caller needs to refocus at this point?
+            // return the response to the prompt
+            has_response = true;
+            return StateReturn(StateReturn::Transition::EXIT);
+        }
+
+        if (nc_input.modifiers == NCKEY_MOD_CTRL && nc_input.id == 'c') {
+            // we'll have to reset the response
+            has_response = false;
+            return StateReturn(StateReturn::Transition::EXIT);
+        }
+
+        return StateReturn();
+    }
+
+    void trigger_render() {
+        view_ptr->focus_cmd();
+        view_ptr->render_cmd();
+    }
+};
+
+static inline PromptState prompt_state;
+
+class FileSaverState : public ProgramState {
+
+    static const std::unordered_map<std::string_view, size_t> msg_to_jump_idx;
+
+    File *file_ptr;                // corresponds to the textstate
+    TextBuffer const *text_buffer; // corresponds to the textstate
+
+    std::optional<std::string> maybe_response_str; // for potential prompts
+  public:
+    FileSaverState(File *fp, TextBuffer const *tbp)
+        : file_ptr(fp),
+          text_buffer(tbp) {
+    }
+
+    StateReturn handle_msg(std::string_view msg) {
+
+        // we resume our computations here?
+        if (!msg.starts_with("FileSaverState:")) {
+            return StateReturn(false);
+        }
+        std::string_view remaining = msg.substr(15);
+        // do all the message responses here
+        size_t jump_idx = (size_t)-1;
+        if (remaining.starts_with("STARTFILEOPEN")) {
+            jump_idx = 0;
+        } else if (remaining.starts_with("FILENAME:")) {
+            remaining = remaining.substr(9);
+            if (remaining.empty()) {
+                // user cancelled
+                return StateReturn(StateReturn::Transition::EXIT);
+            } else {
+                assert(remaining.starts_with("str="));
+                remaining = remaining.substr(4);
+                assert(!remaining.empty());
+                // TODO: we need to validate names
+
+                file_ptr->set_filename(remaining);
+                jump_idx = 2;
+            }
+        } else if (remaining.starts_with("OVERWRITE:")) {
+            remaining = remaining.substr(10);
+            if (remaining.empty() || !(remaining.starts_with("str=Y") ||
+                                       !remaining.starts_with("str=y"))) {
+                // user cancelled
+                *file_ptr = File();
+                return StateReturn(StateReturn::Transition::EXIT);
+            } else {
+                jump_idx = 3;
+            }
+        }
+
+        switch (jump_idx) {
+        case 0: // STARTFILEOPEN
+            if (file_ptr->is_open()) {
+
+                if (file_ptr->get_mode() == File::Mode::READWRITE) {
+                    // just write and go home
+                    file_ptr->write(text_buffer->get_view());
+                    view_ptr->notify("File saved."); // why doesnt this persist?
+                    return StateReturn(StateReturn::Transition::EXIT);
+                } else {
+                    view_ptr->notify("No write permissions to this file.");
+                    *file_ptr = File();
+                    return StateReturn(StateReturn::Transition::EXIT);
+                }
+            }
+        case 1: // FILENAME
+            if (!file_ptr->has_filename()) {
+                prompt_state.setup("Enter filename:",
+                                   "FileSaverState:FILENAME");
+                return StateReturn(&prompt_state);
+            }
+        case 2: // OVERWRITE
+            if (!file_ptr->try_open_or_create()) {
+                // file already existed ask about overwriting
+                prompt_state.setup("File exists, overwrite? [y/N]:",
+                                   "FileSaverState:OVERWRITE");
+                return StateReturn(&prompt_state);
+            }
+        case 3: // confirmed, attempt writing
+            if (file_ptr->get_mode() != File::Mode::READWRITE) {
+                view_ptr->notify("No write permissions to this file.");
+                *file_ptr = File();
+                return StateReturn(StateReturn::Transition::EXIT);
+            } else {
+                // write
+                if (!file_ptr->write(text_buffer->get_view())) {
+                    view_ptr->notify("Something went wrong saving to file.");
+                }
+                return StateReturn(StateReturn::Transition::EXIT);
+            }
+        default:
+            return StateReturn(false);
+        }
+    }
+
+    StateReturn handle_input([[maybe_unused]] ncinput nc_input) {
+        // never handle inputs; always bubble them up
+        return StateReturn(false);
+    }
+
+    void enter() {
+        event_queue_ptr->post_message("FileSaverState:STARTFILEOPEN");
+    }
+
+    void exit() {
+    }
+
+    void register_keybinds() {
+        // nothing to register
+    }
+
+    void trigger_render() {
+        // nothing to render?
+    }
+
+  private:
+    // Tries to open the file
+    // if the file already open we move on
+};
+
+const std::unordered_map<std::string_view, size_t>
+    FileSaverState::msg_to_jump_idx = {{"STARTFILEOPEN", 0}};
+
 class TextState : public ProgramState {
     File file;
     TextBuffer text_buffer;
@@ -194,12 +454,13 @@ class TextState : public ProgramState {
             file = File(maybe_filename.value());
         }
 
-        if (file.has_errmsg()) {
-            view_ptr->notify(file.get_errmsg());
-        } else if (auto fc = file.get_file_contents(); fc.has_value()) {
+        if (auto fc = file.get_file_contents(); fc.has_value()) {
             text_buffer.load_contents(*fc);
         }
 
+        if (file.has_errmsg()) {
+            view_ptr->notify(file.get_errmsg());
+        }
         // do a non-creating open
         plane_fd = view_ptr->create_text_plane(this->get_text_plane_model());
     }
@@ -485,7 +746,7 @@ class TextState : public ProgramState {
 
     // Save
     StateReturn CTRL_O_HANDLER() {
-        return StateReturn();
+        return StateReturn(new FileSaverState(&file, &text_buffer));
     }
 
     // Search
@@ -581,128 +842,46 @@ class TextState : public ProgramState {
     }
 };
 
-class PromptState : public ProgramState {
-    // stuff for prompting
+struct StateStack {
+    // owns all the states?
 
-    // place the response when we quit here
-    std::optional<std::string> *maybe_reponse_ptr;
-    std::string prompt_str;
-    size_t cursor;
-    std::string cmd_buf;
+    std::vector<ProgramState *> state_stack;
 
-  public:
-    PromptState()
-        : ProgramState() {
-    }
-
-    StateReturn handle_msg(std::string_view msg) {
-        // nothing to do rn
-        return StateReturn();
-    }
-
-    void enter() {
-        cmd_buf.clear();
-        cursor = 0;
-    }
-
-    void exit() {
-        prompt_str.clear();
-    }
-
-    void register_keybinds() {
-        // nothing here right now
-    }
-
-    void set_prompt_str(std::string_view ps) {
-        prompt_str = ps;
-    }
-
-    PromptPlaneModel get_prompt_plane_model() {
-        return PromptPlaneModel{&prompt_str, &cursor, &cmd_buf};
-    }
-
-    StateReturn handle_input(ncinput nc_input) {
-        auto move_cursor_left = [&]() {
-            if (cursor > 0) {
-                --cursor;
-            }
-        };
-
-        auto move_cursor_right = [&]() {
-            if (cursor < cmd_buf.size()) {
-                ++cursor;
-            }
-        };
-
-        view_ptr->focus_cmd();
-
-        if (nc_input.modifiers == 0 &&
-            ((nc_input.id >= 32 && nc_input.id <= 255) ||
-             nc_input.id == NCKEY_TAB)) {
-
-            cmd_buf.insert(cursor, 1, (char)nc_input.id);
-            move_cursor_right();
-            // should cursors be part of view or state?
-
-            return StateReturn();
+    ~StateStack() {
+        while (state_stack.empty()) {
+            delete state_stack.back();
+            state_stack.pop_back();
         }
-
-        // TODO: handle all the other modifiers for these cases
-        if (nc_input.modifiers == 0 && nc_input.id == NCKEY_BACKSPACE) {
-            if (cursor >= 1) {
-                cmd_buf.erase(cursor - 1);
-                move_cursor_left();
-            }
-            return StateReturn();
-        }
-
-        if (nc_input.modifiers == 0 && nc_input.id == NCKEY_DEL) {
-            if (cursor < cmd_buf.size()) {
-                cmd_buf.erase(cursor);
-            }
-            return StateReturn();
-        }
-
-        // arrow keys here
-        switch (nc_input.id) {
-        case NCKEY_LEFT:
-            move_cursor_left();
-            return StateReturn();
-        case NCKEY_RIGHT:
-            move_cursor_right();
-            return StateReturn();
-        default:
-            break;
-        }
-
-        if (nc_input.modifiers == 0 && nc_input.id == NCKEY_ENTER) {
-            // TODO: Caller needs to refocus at this point?
-            // return the response to the prompt
-            assert(maybe_reponse_ptr);
-            *maybe_reponse_ptr = cmd_buf;
-            return StateReturn(StateReturn::Transition::EXIT);
-        }
-
-        if (nc_input.modifiers == NCKEY_MOD_CTRL && nc_input.id == 'c') {
-            // we'll have to reset the response
-            assert(maybe_reponse_ptr);
-            maybe_reponse_ptr->reset();
-            return StateReturn(StateReturn::Transition::EXIT);
-        }
-
-        return StateReturn();
     }
 
-    void trigger_render() {
-        view_ptr->focus_cmd();
-        view_ptr->render_cmd();
+    void initial_setup(std::optional<std::string_view> maybe_filename) {
+        state_stack.push_back(new TextState(maybe_filename));
+    }
+
+    void pop() {
+        // TODO: do we need to use any casts?
+        if (&prompt_state != state_stack.back()) {
+            delete state_stack.back();
+        }
+        state_stack.pop_back();
+    }
+
+    void push(ProgramState *new_state) {
+        state_stack.push_back(new_state);
+    }
+
+    bool empty() const {
+        return state_stack.empty();
+    }
+
+    ProgramState *active_state() {
+        return state_stack.back();
     }
 };
 
 struct Program {
 
-    std::vector<std::shared_ptr<ProgramState>> state_stack;
-    static inline PromptState prompt_state;
+    StateStack state_stack;
 
     View view;
     EventQueue event_queue;
@@ -712,12 +891,11 @@ struct Program {
           event_queue(view.get_nc_ptr()) {
 
         // This is still plenty ugly.
-
+        ProgramState::set_eq_ptr(&event_queue);
         ProgramState::set_view_ptr(&view);
         view.set_prompt_plane(prompt_state.get_prompt_plane_model());
 
-        state_stack.push_back(
-            ProgramState::get_first_text_state(maybe_filename));
+        state_stack.initial_setup(maybe_filename);
     }
 
     void run_event_loop() {
@@ -726,11 +904,11 @@ struct Program {
         // if no notification render status?
         view.render_text();
 
-        state_stack.back()->enter();
+        state_stack.active_state()->enter();
         while (!state_stack.empty()) {
 
             view.render_status();
-            state_stack.back()->trigger_render();
+            state_stack.active_state()->trigger_render();
             Event ev = event_queue.get_event();
 
             // for now handle quitting here
@@ -739,16 +917,17 @@ struct Program {
                 break;
             }
 
-            StateReturn sr = state_stack.back()->handle_event(ev);
+            // TODO: eventually we need to bubble up unhandled events
+            StateReturn sr = state_stack.active_state()->handle_event(ev);
             switch (sr.transition_type) {
                 using enum StateReturn::Transition;
             case ENTER: {
-                state_stack.push_back(sr.next_state);
-                state_stack.back()->enter();
+                state_stack.push(sr.next_state_ptr);
+                state_stack.active_state()->enter();
             } break;
             case EXIT: {
-                state_stack.back()->exit();
-                state_stack.pop_back();
+                state_stack.active_state()->exit();
+                state_stack.pop();
             }
             // TODO: handle bubbling inputs
             default:

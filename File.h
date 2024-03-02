@@ -201,19 +201,64 @@ struct File {
         return true;
     }
 
-    void try_open_or_create() {
-        if (fd != -1) {
-            // it's already open
-            return;
+    bool try_open_or_create() {
+        // returns true if file was created
+        // TODO: mkdir -p semantics at some point?
+
+        if (-1 != fd) {
+            return false;
         }
 
         assert(has_filename());
-        fd = open(filename->c_str(), O_RDWR | O_CREAT,
-                  S_IRGRP | S_IWGRP | S_IRUSR | S_IWUSR | S_IROTH | S_IWOTH);
-        if (fd == -1) {
-            errmsg = strerror(errno);
-            mode = Mode::UNREADABLE;
+        fd = open(filename->c_str(), O_RDWR);
+
+        if (fd != -1) {
+            mode = READWRITE;
+            return false;
         }
+
+        // file doesn't exist, try again with O_CREAT
+        if (fd == -1 && errno == ENOENT) {
+            fd =
+                open(filename->c_str(), O_RDWR | O_CREAT,
+                     S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+            mode = READWRITE;
+            if (-1 != fd) {
+                return true;
+            }
+        }
+
+        // remaining errors in case of ENOENT
+        if (fd == -1 && errno == EACCES) {
+            // we know the file exists
+            errmsg = "";
+            errmsg->append(strerror(errno));
+            errmsg->append(" on opening ");
+            errmsg->append(*filename);
+
+            // try again with lower permissions
+            fd = open(filename->c_str(), O_RDONLY);
+            if (fd == -1) {
+                mode = UNREADABLE;
+                errmsg = "";
+                errmsg->append(strerror(errno));
+                errmsg->append(" on opening ");
+                errmsg->append(*filename);
+            } else {
+                mode = READONLY;
+                errmsg->clear();
+            }
+        } else if (fd == -1 && errno == EISDIR) {
+            errmsg = *filename + " is a directory.";
+            mode = UNREADABLE;
+        }
+
+        return false;
+    }
+
+    void set_filename(std::string_view file_view) {
+        *this = File(); // resets the file
+        filename = std::string(file_view);
     }
 
     bool is_open() const {

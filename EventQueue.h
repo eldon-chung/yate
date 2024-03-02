@@ -1,6 +1,7 @@
 #pragma once
 
 #include <deque>
+#include <iostream>
 #include <string>
 
 #include <notcurses/notcurses.h>
@@ -61,6 +62,13 @@ struct Event {
     std::string_view get_msg() const {
         return msg;
     }
+
+    friend std::ostream &operator<<(std::ostream &os, Event const &event) {
+        using enum Event::Type;
+        os << "{.msg=" << event.msg << " .type="
+           << ((event.type == Event::Type::MESSAGE) ? "MSG" : "INPUT") << " }";
+        return os;
+    }
 };
 
 struct EventQueue {
@@ -84,5 +92,9 @@ struct EventQueue {
         struct ncinput input;
         notcurses_get(nc_ptr, nullptr, &input);
         return Event{input};
+    }
+
+    void post_message(std::string_view msg) {
+        event_queue.push_back(msg);
     }
 };
