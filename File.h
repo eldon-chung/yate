@@ -1,3 +1,5 @@
+#pragma once
+
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
@@ -7,21 +9,25 @@
 
 #include <algorithm>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
 // TODO: refactor API at some point.
 struct File {
+    enum class Mode { READWRITE, READONLY, UNREADABLE, SCRATCH };
+    using enum Mode;
+
     std::optional<std::string> filename;
     int fd; // won't bother with an optional for this one
     std::optional<std::string> errmsg;
-    bool in_ro_mode;
+    Mode mode;
 
-    File(std::string_view fn, int fd_, std::optional<std::string> em, bool irm)
+    File(std::string_view fn, int fd_, std::optional<std::string> em, Mode m)
         : filename(fn),
           fd(fd_),
           errmsg(em),
-          in_ro_mode(irm) {
+          mode(m) {
     }
 
   public:
@@ -29,12 +35,12 @@ struct File {
         : filename(std::nullopt),
           fd(-1),
           errmsg(std::nullopt),
-          in_ro_mode(false) {
+          mode(SCRATCH) {
     }
 
     File(std::string_view fn)
         : filename(fn),
-          in_ro_mode(false) {
+          mode(SCRATCH) {
         // not a creating open. we can assign filenames first
         // if the file doesnt exist we only create it when
         // writing
@@ -42,17 +48,37 @@ struct File {
         // TODO: mkdir -p semantics at some point?
 
         fd = open(filename->c_str(), O_RDWR);
+
+        if (fd != -1) {
+            mode = READWRITE;
+            return;
+        }
+
         if (fd == -1 && errno == EACCES) {
-            errmsg = strerror(errno);
+            // we know the file exists
+            errmsg = "";
+            errmsg->append(strerror(errno));
+            errmsg->append(" on opening ");
+            errmsg->append(*filename);
 
             // try again with lower permissions
             fd = open(fn.data(), O_RDONLY);
             if (fd == -1) {
-                errmsg = strerror(errno);
+                mode = UNREADABLE;
+                errmsg = "";
+                errmsg->append(strerror(errno));
+                errmsg->append(" on opening ");
+                errmsg->append(*filename);
             } else {
-                in_ro_mode = true;
+                mode = READONLY;
                 errmsg->clear();
             }
+        } else if (fd == -1 && errno == EISDIR) {
+            errmsg = *filename + " is a directory.";
+            mode = UNREADABLE;
+        } else if (fd == -1 && errno == ENOENT) {
+            mode = SCRATCH;
+            errmsg = *filename + " does not exist.";
         }
     }
 
@@ -69,7 +95,7 @@ struct File {
         : filename(std::move(other.filename)),
           fd(std::exchange(other.fd, -1)),
           errmsg(std::move(other.errmsg)),
-          in_ro_mode(other.in_ro_mode) {
+          mode(other.mode) {
     }
 
     File &operator=(File &&other) {
@@ -83,35 +109,21 @@ struct File {
         swap(a.fd, b.fd);
         swap(a.filename, b.filename);
         swap(a.errmsg, b.errmsg);
-        swap(a.in_ro_mode, b.in_ro_mode);
+        swap(a.mode, b.mode);
     }
 
-    static std::pair<File, bool> create_if_not_exists(std::string_view fn) {
-        int fd = open(fn.data(), O_RDWR);
-        std::string errmsg;
+    Mode get_mode() const {
+        return mode;
+    }
 
-        if (fd == -1 && errno == EACCES) {
-            // try again with lower permissions
-            fd = open(fn.data(), O_RDONLY);
-            if (fd == -1) {
-                errmsg = strerror(errno);
-            }
-            return {File(fn, fd, std::move(errmsg), true), false};
-        } else if (fd == -1 && errno == ENOENT) {
-            // then we should be creating it
-            fd =
-                open(fn.data(), O_RDWR | O_CREAT,
-                     S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
-            return {File(fn, fd, std::move(errmsg), false), true};
+    std::optional<std::string> get_file_contents() {
+
+        if (mode == Mode::UNREADABLE) {
+            errmsg = "Can't read from file";
+            return std::nullopt;
         }
 
-        return {File(fn, fd, std::move(errmsg), false),
-                false}; // file was not created
-    }
-
-    std::string get_file_contents() {
-
-        if (fd == -1) {
+        if (mode == SCRATCH) {
             return "";
         }
 
@@ -126,6 +138,7 @@ struct File {
 
         std::string to_return;
         to_return.resize((size_t)st.st_size);
+
         ssize_t num_read = read(fd, to_return.data(), (size_t)st.st_size);
         if (num_read == -1) {
             std::cerr << "File: could not read from \"" << *filename;
@@ -137,26 +150,22 @@ struct File {
     }
 
     bool write(std::vector<std::string_view> contents) {
-        if (in_ro_mode) {
+        assert(has_filename());
+
+        if (mode == Mode::SCRATCH) {
+            // we need to open the file first
+            // this is wrong
+            try_open_or_create();
+        }
+
+        if (mode == Mode::UNREADABLE) {
+            errmsg = "Don't have permissions";
+            return false;
+        }
+
+        if (mode == Mode::READONLY) {
             errmsg = "Can't write to file in read-only mode";
             return false;
-        }
-
-        if (!filename.has_value()) {
-            // this is exceptional behaviour
-            std::cerr << "No file name specified yet." << std::endl;
-            return false;
-        }
-
-        if (fd == -1 && filename.has_value()) {
-            // we now attempt a creating open?
-            fd =
-                open(filename->c_str(), O_RDWR | O_CREAT,
-                     S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
-            if (fd == -1) {
-                errmsg = strerror(errno);
-                return false;
-            }
         }
 
         ssize_t num_written = 0;
@@ -192,6 +201,21 @@ struct File {
         return true;
     }
 
+    void try_open_or_create() {
+        if (fd != -1) {
+            // it's already open
+            return;
+        }
+
+        assert(has_filename());
+        fd = open(filename->c_str(), O_RDWR | O_CREAT,
+                  S_IRGRP | S_IWGRP | S_IRUSR | S_IWUSR | S_IROTH | S_IWOTH);
+        if (fd == -1) {
+            errmsg = strerror(errno);
+            mode = Mode::UNREADABLE;
+        }
+    }
+
     bool is_open() const {
         return fd != -1;
     }
@@ -210,9 +234,5 @@ struct File {
 
     std::string_view get_errmsg() const {
         return errmsg.value();
-    }
-
-    bool in_readonly_mode() const {
-        return in_ro_mode;
     }
 };

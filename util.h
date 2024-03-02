@@ -6,8 +6,19 @@
 #include <iostream>
 
 struct Point {
+
     size_t row;
     size_t col;
+
+    Point()
+        : row(0),
+          col(0) {
+    }
+
+    Point(size_t r, size_t c)
+        : row(r),
+          col(c) {
+    }
 
     friend auto operator<=>(Point const &a, Point const &b) = default;
 
