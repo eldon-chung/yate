@@ -458,9 +458,11 @@ class FileSaverState : public ProgramState {
             case FAIL:
                 event_queue_ptr->post_message(maybe_target_for_response.value(),
                                               "FAIL");
+                break;
             case SUCCESS:
                 event_queue_ptr->post_message(maybe_target_for_response.value(),
                                               "SUCCESS");
+                break;
             default:
                 assert(false);
             }
@@ -481,16 +483,16 @@ class FileSaverState : public ProgramState {
     // if the file already open we move on
     StateReturn write_to_file() {
         using enum SubState;
+
         assert(file_ptr->is_open());
         if (file_ptr->get_mode() != File::Mode::READWRITE) {
-            view_ptr->notify("File cannot be written to.");
             substate = FAIL;
         } else if (!file_ptr->write(text_buffer->get_view())) {
-            view_ptr->notify("Error saving to file.");
             substate = FAIL;
         } else {
             substate = SUCCESS;
         }
+
         return StateReturn(StateReturn::Transition::EXIT);
     }
 };
@@ -499,14 +501,28 @@ class FileOpenerState : public ProgramState {
 
     File *file_ptr;
     TextBuffer *text_buffer_ptr;
-    std::optional<std::string> maybe_filename;
+    Point *text_buffer_cursor_ptr;
+    std::optional<std::string> maybe_filename_to_open;
+
+    enum class SubState {
+        NO_FILENAME,
+        HAS_FILENAME,
+        HAS_UNSAVED,
+        ASK_TO_SAVE,
+        OPENING,
+        QUIT,
+        FAIL,
+        SUCCESS
+    };
+    SubState substate;
 
   public:
-    FileOpenerState(File *fp, TextBuffer *tbp)
+    FileOpenerState(File *fp, TextBuffer *tbp, Point *tbcp)
         : ProgramState(),
           file_ptr(fp),
           text_buffer_ptr(tbp),
-          maybe_filename(std::nullopt) {
+          text_buffer_cursor_ptr(tbcp),
+          maybe_filename_to_open(std::nullopt) {
     }
 
     ~FileOpenerState() {
@@ -517,82 +533,70 @@ class FileOpenerState : public ProgramState {
     }
 
     StateReturn handle_msg(std::string_view msg) {
-        // this is where the bulk of our logic is done
-
-        // Note: we need to decide what to do about
-        // the currently existing file
-        // for now we quit without saving which is not ideal
 
         // we resume our computations here?
         if (!msg.starts_with("FileOpenerState:")) {
             return StateReturn(false);
         }
 
-        std::string_view remaining = msg.substr(16);
-
-        size_t jump_idx = (size_t)-1;
-        if (remaining.starts_with("STARTFILEOPEN")) {
-            jump_idx = 0;
-        } else if (remaining.starts_with("OPENFILENAME:")) {
-            remaining = remaining.substr(13);
-            if (remaining.starts_with("str=") && remaining.size() > 4) {
-                // get the filename
-                maybe_filename = remaining.substr(4);
-                jump_idx = 1;
-            } else {
+        msg = msg.substr(16);
+        switch (substate) {
+            using enum SubState;
+        case NO_FILENAME:
+            // prompt the user for a name
+            prompt_state.setup("Enter file name to open:", "FileOpenerState");
+            substate = HAS_FILENAME;
+            return StateReturn(&prompt_state);
+        case HAS_FILENAME:
+            if (!(msg.starts_with("str=") && msg.size() > 4)) {
                 return StateReturn(StateReturn::Transition::EXIT);
             }
-        } else if (remaining.starts_with("SAVECURRENTFILE:")) {
-            remaining = remaining.substr(16);
-            if (remaining == "str=Y" || remaining == "str=y") {
-                // get the filename
-                // then we need to start the save state
+            substate = ASK_TO_SAVE;
+            maybe_filename_to_open = std::string(msg.substr(4));
+            // TODO: when undo stack is empty, we
+            // skip the next state
+        case ASK_TO_SAVE:
+            prompt_state.setup("Do you want to save current contents? [Y/n]:",
+                               "FileOpenerState");
+
+            substate = HAS_UNSAVED;
+            return StateReturn(&prompt_state);
+        case HAS_UNSAVED:
+            if (msg == "null") {
+                // then the user cancelled, in which case
+                // we bail
+                return StateReturn(StateReturn::Transition::EXIT);
+            }
+            substate = OPENING;
+            if (msg != "msg=N" && msg != "msg=n") {
                 return StateReturn(new FileSaverState(file_ptr, text_buffer_ptr,
                                                       "FileOpenerState"));
-            } else if (remaining == "str=N" || remaining == "str=n") {
-                jump_idx = 2;
-            } else {
+            }
+        case OPENING: {
+            assert(maybe_filename_to_open.has_value());
+            File attempt = File(maybe_filename_to_open.value());
+            if (attempt.get_mode() == File::Mode::SCRATCH) {
+                view_ptr->notify("File doesn't exist");
                 return StateReturn(StateReturn::Transition::EXIT);
             }
-        } else if (remaining.starts_with("str=SAVEFAILED")) {
-            return StateReturn(StateReturn::Transition::EXIT);
-        } else if (remaining.starts_with("str=SAVESUCCESS")) {
-            jump_idx = 2;
-        }
 
-        switch (jump_idx) {
-        case 0:
-            // ask for file name to open
-            prompt_state.setup("Enter filename to open:",
-                               "FileOpenerState:OPENFILENAME");
-            return StateReturn(&prompt_state);
-        case 1:
-            // we got the filename, for now always ask about
-            // saving contents
-            // TODO: check against the undo stack
-            assert(maybe_filename.has_value());
-            prompt_state.setup(
-                "Do you want to save your current contents? [y/N]",
-                "FileOpenerState:SAVECURRENTFILE");
-            return StateReturn(&prompt_state);
-        case 2:
-            // now all we do is open the file
-            {
-                File attempt = File(maybe_filename.value());
-                if (attempt.get_mode() == File::Mode::READONLY ||
-                    attempt.get_mode() == File::Mode::READWRITE) {
-                    *file_ptr = std::move(attempt);
-                    text_buffer_ptr->load_contents(
-                        file_ptr->get_file_contents().value());
-                } else {
-                    view_ptr->notify("File cannot be read from.");
-                    // don't overwrite file_ptr, don't mutate
-                    // text_buffer_ptr
-                }
+            if (attempt.get_mode() == File::Mode::UNREADABLE) {
+                view_ptr->notify("File can't be read");
                 return StateReturn(StateReturn::Transition::EXIT);
             }
+
+            auto maybe_file_contents = attempt.get_file_contents();
+            if (!maybe_file_contents) {
+                view_ptr->notify("Could not load file contents.");
+            } else {
+                text_buffer_ptr->load_contents(maybe_file_contents.value());
+                // for now we just reset this at {0, 0}
+                *text_buffer_cursor_ptr = {0, 0};
+            }
+            return StateReturn(StateReturn::Transition::EXIT);
+        }
         default:
-            break;
+            assert(false);
         }
         return StateReturn(false);
     }
@@ -602,8 +606,9 @@ class FileOpenerState : public ProgramState {
     }
 
     void enter() {
+        substate = SubState::NO_FILENAME;
         // send a message to kick things off
-        event_queue_ptr->post_message("FileOpenerState:STARTFILEOPEN");
+        event_queue_ptr->post_message("FileOpenerState", "");
     }
 
     void exit() {
@@ -927,7 +932,8 @@ class TextState : public ProgramState {
 
     // Open
     StateReturn CTRL_R_HANDLER() {
-        return StateReturn(new FileOpenerState(&file, &text_buffer));
+        return StateReturn(
+            new FileOpenerState(&file, &text_buffer, &text_cursor));
     }
 
     // Save
