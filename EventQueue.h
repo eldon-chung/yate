@@ -97,4 +97,12 @@ struct EventQueue {
     void post_message(std::string_view msg) {
         event_queue.push_back(msg);
     }
+
+    void post_message(std::string_view target, std::string_view payload) {
+        std::string msg = std::string(target);
+        msg += ":str=";
+        msg += payload;
+
+        post_message(msg);
+    }
 };

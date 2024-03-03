@@ -178,7 +178,17 @@ class ProgramState {
     get_first_text_state(std::optional<std::string_view> maybe_filename) {
         return std::make_shared<TextState>(maybe_filename);
     }
+
+    friend std::ostream &operator<<(std::ostream &os, ProgramState const &ps);
+
+  protected:
+    virtual void print(std::ostream &os) const = 0;
 };
+
+inline std::ostream &operator<<(std::ostream &os, ProgramState const &ps) {
+    ps.print(os);
+    return os;
+}
 
 class PromptState : public ProgramState {
     // stuff for prompting
@@ -198,6 +208,10 @@ class PromptState : public ProgramState {
     StateReturn handle_msg([[maybe_unused]] std::string_view msg) {
         // nothing to do rn
         return StateReturn();
+    }
+
+    void print(std::ostream &os) const {
+        os << "{PromptState }";
     }
 
     void enter() {
@@ -220,6 +234,7 @@ class PromptState : public ProgramState {
         cmd_buf.clear();
         prompt_str.clear();
         cursor = 0;
+        has_response = false;
     }
 
     void register_keybinds() {
@@ -295,7 +310,7 @@ class PromptState : public ProgramState {
             return StateReturn(StateReturn::Transition::EXIT);
         }
 
-        if (nc_input.modifiers == NCKEY_MOD_CTRL && nc_input.id == 'c') {
+        if (nc_input.modifiers == NCKEY_MOD_CTRL && nc_input.id == 'C') {
             // we'll have to reset the response
             has_response = false;
             return StateReturn(StateReturn::Transition::EXIT);
@@ -319,11 +334,24 @@ class FileSaverState : public ProgramState {
     File *file_ptr;                // corresponds to the textstate
     TextBuffer const *text_buffer; // corresponds to the textstate
 
-    std::optional<std::string> maybe_response_str; // for potential prompts
+    // for potential prompts
+    std::optional<std::string> maybe_target_for_response;
+
   public:
     FileSaverState(File *fp, TextBuffer const *tbp)
         : file_ptr(fp),
-          text_buffer(tbp) {
+          text_buffer(tbp),
+          maybe_target_for_response(std::nullopt) {
+    }
+
+    FileSaverState(File *fp, TextBuffer const *tbp, std::string_view target)
+        : file_ptr(fp),
+          text_buffer(tbp),
+          maybe_target_for_response(std::string(target)) {
+    }
+
+    void print(std::ostream &os) const {
+        os << "{FileSaverState }";
     }
 
     StateReturn handle_msg(std::string_view msg) {
@@ -339,17 +367,18 @@ class FileSaverState : public ProgramState {
             jump_idx = 0;
         } else if (remaining.starts_with("FILENAME:")) {
             remaining = remaining.substr(9);
-            if (remaining.empty()) {
+            if (remaining.starts_with("str=") && remaining.size() > 4) {
                 // user cancelled
-                return StateReturn(StateReturn::Transition::EXIT);
-            } else {
-                assert(remaining.starts_with("str="));
                 remaining = remaining.substr(4);
-                assert(!remaining.empty());
-                // TODO: we need to validate names
-
                 file_ptr->set_filename(remaining);
                 jump_idx = 2;
+            } else {
+                if (maybe_target_for_response) {
+                    event_queue_ptr->post_message(*maybe_target_for_response,
+                                                  "SAVEFAILED");
+                }
+                return StateReturn(StateReturn::Transition::EXIT);
+                // TODO: we need to validate names
             }
         } else if (remaining.starts_with("OVERWRITE:")) {
             remaining = remaining.substr(10);
@@ -357,6 +386,10 @@ class FileSaverState : public ProgramState {
                                        !remaining.starts_with("str=y"))) {
                 // user cancelled
                 *file_ptr = File();
+                if (maybe_target_for_response) {
+                    event_queue_ptr->post_message(*maybe_target_for_response,
+                                                  "SAVEFAILED");
+                }
                 return StateReturn(StateReturn::Transition::EXIT);
             } else {
                 jump_idx = 3;
@@ -370,11 +403,21 @@ class FileSaverState : public ProgramState {
                 if (file_ptr->get_mode() == File::Mode::READWRITE) {
                     // just write and go home
                     file_ptr->write(text_buffer->get_view());
-                    view_ptr->notify("File saved."); // why doesnt this persist?
+                    view_ptr->notify("File saved.");
+
+                    if (maybe_target_for_response) {
+
+                        event_queue_ptr->post_message(
+                            *maybe_target_for_response, "SAVESUCCESS");
+                    }
                     return StateReturn(StateReturn::Transition::EXIT);
                 } else {
                     view_ptr->notify("No write permissions to this file.");
                     *file_ptr = File();
+                    if (maybe_target_for_response) {
+                        event_queue_ptr->post_message(
+                            *maybe_target_for_response, "SAVEFAILED");
+                    }
                     return StateReturn(StateReturn::Transition::EXIT);
                 }
             }
@@ -395,11 +438,24 @@ class FileSaverState : public ProgramState {
             if (file_ptr->get_mode() != File::Mode::READWRITE) {
                 view_ptr->notify("No write permissions to this file.");
                 *file_ptr = File();
+                if (maybe_target_for_response) {
+                    event_queue_ptr->post_message(*maybe_target_for_response,
+                                                  "SAVEFAILED");
+                }
                 return StateReturn(StateReturn::Transition::EXIT);
             } else {
                 // write
                 if (!file_ptr->write(text_buffer->get_view())) {
                     view_ptr->notify("Something went wrong saving to file.");
+                    if (maybe_target_for_response) {
+                        event_queue_ptr->post_message(
+                            *maybe_target_for_response, "SAVEFAILED");
+                    }
+                } else {
+                    if (maybe_target_for_response) {
+                        event_queue_ptr->post_message(
+                            *maybe_target_for_response, "SAVESUCCESS");
+                    }
                 }
                 return StateReturn(StateReturn::Transition::EXIT);
             }
@@ -413,11 +469,16 @@ class FileSaverState : public ProgramState {
         return StateReturn(false);
     }
 
+    void setup(std::string_view tfr) {
+        maybe_target_for_response = tfr;
+    }
+
     void enter() {
         event_queue_ptr->post_message("FileSaverState:STARTFILEOPEN");
     }
 
     void exit() {
+        maybe_target_for_response = std::nullopt;
     }
 
     void register_keybinds() {
@@ -433,8 +494,126 @@ class FileSaverState : public ProgramState {
     // if the file already open we move on
 };
 
-const std::unordered_map<std::string_view, size_t>
-    FileSaverState::msg_to_jump_idx = {{"STARTFILEOPEN", 0}};
+class FileOpenerState : public ProgramState {
+
+    File *file_ptr;
+    TextBuffer *text_buffer_ptr;
+    std::optional<std::string> maybe_filename;
+
+  public:
+    FileOpenerState(File *fp, TextBuffer *tbp)
+        : ProgramState(),
+          file_ptr(fp),
+          text_buffer_ptr(tbp),
+          maybe_filename(std::nullopt) {
+    }
+
+    ~FileOpenerState() {
+    }
+
+    void print(std::ostream &os) const {
+        os << "{FileOpenerState }";
+    }
+
+    StateReturn handle_msg(std::string_view msg) {
+        // this is where the bulk of our logic is done
+
+        // Note: we need to decide what to do about
+        // the currently existing file
+        // for now we quit without saving which is not ideal
+
+        // we resume our computations here?
+        if (!msg.starts_with("FileOpenerState:")) {
+            return StateReturn(false);
+        }
+
+        std::string_view remaining = msg.substr(16);
+
+        size_t jump_idx = (size_t)-1;
+        if (remaining.starts_with("STARTFILEOPEN")) {
+            jump_idx = 0;
+        } else if (remaining.starts_with("OPENFILENAME:")) {
+            remaining = remaining.substr(13);
+            if (remaining.starts_with("str=") && remaining.size() > 4) {
+                // get the filename
+                maybe_filename = remaining.substr(4);
+                jump_idx = 1;
+            } else {
+                return StateReturn(StateReturn::Transition::EXIT);
+            }
+        } else if (remaining.starts_with("SAVECURRENTFILE:")) {
+            remaining = remaining.substr(16);
+            if (remaining == "str=Y" || remaining == "str=y") {
+                // get the filename
+                // then we need to start the save state
+                return StateReturn(new FileSaverState(file_ptr, text_buffer_ptr,
+                                                      "FileOpenerState"));
+            } else if (remaining == "str=N" || remaining == "str=n") {
+                jump_idx = 2;
+            } else {
+                return StateReturn(StateReturn::Transition::EXIT);
+            }
+        } else if (remaining.starts_with("str=SAVEFAILED")) {
+            return StateReturn(StateReturn::Transition::EXIT);
+        } else if (remaining.starts_with("str=SAVESUCCESS")) {
+            jump_idx = 2;
+        }
+
+        switch (jump_idx) {
+        case 0:
+            // ask for file name to open
+            prompt_state.setup("Enter filename to open:",
+                               "FileOpenerState:OPENFILENAME");
+            return StateReturn(&prompt_state);
+        case 1:
+            // we got the filename, for now always ask about
+            // saving contents
+            // TODO: check against the undo stack
+            assert(maybe_filename.has_value());
+            prompt_state.setup(
+                "Do you want to save your current contents? [y/N]",
+                "FileOpenerState:SAVECURRENTFILE");
+            return StateReturn(&prompt_state);
+        case 2:
+            // now all we do is open the file
+            {
+                File attempt = File(maybe_filename.value());
+                if (attempt.get_mode() == File::Mode::READONLY ||
+                    attempt.get_mode() == File::Mode::READWRITE) {
+                    *file_ptr = std::move(attempt);
+                    text_buffer_ptr->load_contents(
+                        file_ptr->get_file_contents().value());
+                } else {
+                    view_ptr->notify("File cannot be read from.");
+                    // don't overwrite file_ptr, don't mutate text_buffer_ptr
+                }
+                return StateReturn(StateReturn::Transition::EXIT);
+            }
+        default:
+            break;
+        }
+        return StateReturn(false);
+    }
+
+    StateReturn handle_input([[maybe_unused]] ncinput nc_input) {
+        return StateReturn(false);
+    }
+
+    void enter() {
+        // send a message to kick things off
+        event_queue_ptr->post_message("FileOpenerState:STARTFILEOPEN");
+    }
+
+    void exit() {
+        // nothing to clean up
+    }
+    void register_keybinds() {
+        // nothing to register
+    }
+    void trigger_render() {
+        // nothing to render
+    }
+};
 
 class TextState : public ProgramState {
     File file;
@@ -472,6 +651,10 @@ class TextState : public ProgramState {
 
     void exit() {
         // eventually we can prompt user to save here perhaps
+    }
+
+    void print(std::ostream &os) const {
+        os << "{TextState }";
     }
 
     TextPlaneModel get_text_plane_model() {
@@ -741,7 +924,7 @@ class TextState : public ProgramState {
 
     // Open
     StateReturn CTRL_R_HANDLER() {
-        return StateReturn();
+        return StateReturn(new FileOpenerState(&file, &text_buffer));
     }
 
     // Save
@@ -876,6 +1059,20 @@ struct StateStack {
 
     ProgramState *active_state() {
         return state_stack.back();
+    }
+
+    friend std::ostream &operator<<(std::ostream &os, StateStack const &ss) {
+        os << "[";
+        for (auto const &st : ss.state_stack) {
+            if (st) {
+                os << *st;
+            } else {
+                os << "{nullptr}";
+            }
+            os << ",";
+        }
+        os << "]";
+        return os;
     }
 };
 

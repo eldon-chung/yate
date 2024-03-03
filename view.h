@@ -632,8 +632,8 @@ struct CommandPalettePlane {
             ncplane_stain(
                 plane_ptr, 0, 0, 1,
                 (unsigned int)prompt_plane_model.get_prompt_str().size(),
-                BG_INITIALIZER(255, 255, 255), BG_INITIALIZER(255, 255, 255),
-                BG_INITIALIZER(255, 255, 255), BG_INITIALIZER(255, 255, 255));
+                BG_INITIALIZER(105, 105, 105), BG_INITIALIZER(105, 105, 105),
+                BG_INITIALIZER(105, 105, 105), BG_INITIALIZER(105, 105, 105));
         }
         if (!prompt_plane_model.get_cmd_buf().empty()) {
             ncplane_putstr(plane_ptr, prompt_plane_model.get_cmd_buf().data());
