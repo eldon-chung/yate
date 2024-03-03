@@ -211,7 +211,7 @@ class PromptState : public ProgramState {
     }
 
     void print(std::ostream &os) const {
-        os << "{PromptState }";
+        os << "{PromptState}";
     }
 
     void enter() {
@@ -228,6 +228,8 @@ class PromptState : public ProgramState {
         if (has_response) {
             to_send += "str=";
             to_send += cmd_buf;
+        } else {
+            to_send += "null";
         }
         event_queue_ptr->post_message(to_send);
 
@@ -329,10 +331,19 @@ static inline PromptState prompt_state;
 
 class FileSaverState : public ProgramState {
 
-    static const std::unordered_map<std::string_view, size_t> msg_to_jump_idx;
-
     File *file_ptr;                // corresponds to the textstate
     TextBuffer const *text_buffer; // corresponds to the textstate
+
+    enum class SubState {
+        EXISTING_FILE,
+        CLOSED_FILE,
+        HAS_FILENAME,
+        ASK_OVERWRITE,
+        QUIT,
+        FAIL,
+        SUCCESS
+    };
+    SubState substate;
 
     // for potential prompts
     std::optional<std::string> maybe_target_for_response;
@@ -341,6 +352,7 @@ class FileSaverState : public ProgramState {
     FileSaverState(File *fp, TextBuffer const *tbp)
         : file_ptr(fp),
           text_buffer(tbp),
+          substate(SubState::CLOSED_FILE),
           maybe_target_for_response(std::nullopt) {
     }
 
@@ -360,108 +372,57 @@ class FileSaverState : public ProgramState {
         if (!msg.starts_with("FileSaverState:")) {
             return StateReturn(false);
         }
-        std::string_view remaining = msg.substr(15);
-        // do all the message responses here
-        size_t jump_idx = (size_t)-1;
-        if (remaining.starts_with("STARTFILEOPEN")) {
-            jump_idx = 0;
-        } else if (remaining.starts_with("FILENAME:")) {
-            remaining = remaining.substr(9);
-            if (remaining.starts_with("str=") && remaining.size() > 4) {
-                // user cancelled
-                remaining = remaining.substr(4);
-                file_ptr->set_filename(remaining);
-                jump_idx = 2;
-            } else {
-                if (maybe_target_for_response) {
-                    event_queue_ptr->post_message(*maybe_target_for_response,
-                                                  "SAVEFAILED");
-                }
-                return StateReturn(StateReturn::Transition::EXIT);
-                // TODO: we need to validate names
-            }
-        } else if (remaining.starts_with("OVERWRITE:")) {
-            remaining = remaining.substr(10);
-            if (remaining.empty() || !(remaining.starts_with("str=Y") ||
-                                       !remaining.starts_with("str=y"))) {
-                // user cancelled
-                *file_ptr = File();
-                if (maybe_target_for_response) {
-                    event_queue_ptr->post_message(*maybe_target_for_response,
-                                                  "SAVEFAILED");
-                }
-                return StateReturn(StateReturn::Transition::EXIT);
-            } else {
-                jump_idx = 3;
-            }
-        }
+        msg = msg.substr(15);
 
-        switch (jump_idx) {
-        case 0: // STARTFILEOPEN
-            if (file_ptr->is_open()) {
-
-                if (file_ptr->get_mode() == File::Mode::READWRITE) {
-                    // just write and go home
-                    file_ptr->write(text_buffer->get_view());
-                    view_ptr->notify("File saved.");
-
-                    if (maybe_target_for_response) {
-
-                        event_queue_ptr->post_message(
-                            *maybe_target_for_response, "SAVESUCCESS");
-                    }
-                    return StateReturn(StateReturn::Transition::EXIT);
-                } else {
-                    view_ptr->notify("No write permissions to this file.");
-                    *file_ptr = File();
-                    if (maybe_target_for_response) {
-                        event_queue_ptr->post_message(
-                            *maybe_target_for_response, "SAVEFAILED");
-                    }
-                    return StateReturn(StateReturn::Transition::EXIT);
-                }
-            }
-        case 1: // FILENAME
+        switch (substate) {
+            using enum SubState;
+        case EXISTING_FILE: {
+            // just write to the file and call it a day
+            return write_to_file();
+        };
+        case CLOSED_FILE:
             if (!file_ptr->has_filename()) {
-                prompt_state.setup("Enter filename:",
-                                   "FileSaverState:FILENAME");
+                // ask for filename
+                substate = HAS_FILENAME;
+                prompt_state.setup("Enter filename to save to:",
+                                   "FileSaverState");
                 return StateReturn(&prompt_state);
             }
-        case 2: // OVERWRITE
+        case HAS_FILENAME:
+            if (!file_ptr->has_filename() && msg.starts_with("str=") &&
+                msg.size() > 4) {
+                // TODO: filename validation
+                file_ptr->set_filename(msg.substr(4));
+            } else if (msg == "null" || msg.size() == 4) {
+                // then we should just quit
+                substate = QUIT;
+                return StateReturn(StateReturn::Transition::EXIT);
+            }
+            assert(file_ptr->has_filename());
+            // returns true if a file was created in the process
             if (!file_ptr->try_open_or_create()) {
-                // file already existed ask about overwriting
-                prompt_state.setup("File exists, overwrite? [y/N]:",
-                                   "FileSaverState:OVERWRITE");
+                // file was not just created
+                substate = ASK_OVERWRITE;
+                prompt_state.setup("File exists, overwrite? [Y/n]:",
+                                   "FileSaverState");
                 return StateReturn(&prompt_state);
-            }
-        case 3: // confirmed, attempt writing
-            if (file_ptr->get_mode() != File::Mode::READWRITE) {
-                view_ptr->notify("No write permissions to this file.");
-                *file_ptr = File();
-                if (maybe_target_for_response) {
-                    event_queue_ptr->post_message(*maybe_target_for_response,
-                                                  "SAVEFAILED");
-                }
-                return StateReturn(StateReturn::Transition::EXIT);
             } else {
-                // write
-                if (!file_ptr->write(text_buffer->get_view())) {
-                    view_ptr->notify("Something went wrong saving to file.");
-                    if (maybe_target_for_response) {
-                        event_queue_ptr->post_message(
-                            *maybe_target_for_response, "SAVEFAILED");
-                    }
-                } else {
-                    if (maybe_target_for_response) {
-                        event_queue_ptr->post_message(
-                            *maybe_target_for_response, "SAVESUCCESS");
-                    }
-                }
-                return StateReturn(StateReturn::Transition::EXIT);
+                // file was just created, in which case
+                // just set the answer to yes to save
+                msg = "str=Y";
             }
+        case ASK_OVERWRITE:
+            if (msg == "str=Y" || msg == "str=y" || msg == "str=") {
+                return write_to_file();
+            } else {
+                substate = QUIT;
+            }
+            return StateReturn(StateReturn::Transition::EXIT);
         default:
-            return StateReturn(false);
-        }
+            assert(false);
+        };
+        // this should now be unreachable
+        return StateReturn(false);
     }
 
     StateReturn handle_input([[maybe_unused]] ncinput nc_input) {
@@ -474,10 +435,36 @@ class FileSaverState : public ProgramState {
     }
 
     void enter() {
-        event_queue_ptr->post_message("FileSaverState:STARTFILEOPEN");
+        using enum SubState;
+        if (file_ptr->is_open()) {
+            substate = EXISTING_FILE;
+        } else {
+            substate = CLOSED_FILE;
+        }
+        // just a message to start things off
+        event_queue_ptr->post_message("FileSaverState", "");
     }
 
     void exit() {
+        using enum SubState;
+        assert(substate == QUIT || substate == FAIL || substate == SUCCESS);
+        if (maybe_target_for_response) {
+            // switch on states here
+            switch (substate) {
+            case QUIT:
+                event_queue_ptr->post_message(maybe_target_for_response.value(),
+                                              "QUIT");
+                break;
+            case FAIL:
+                event_queue_ptr->post_message(maybe_target_for_response.value(),
+                                              "FAIL");
+            case SUCCESS:
+                event_queue_ptr->post_message(maybe_target_for_response.value(),
+                                              "SUCCESS");
+            default:
+                assert(false);
+            }
+        }
         maybe_target_for_response = std::nullopt;
     }
 
@@ -492,6 +479,20 @@ class FileSaverState : public ProgramState {
   private:
     // Tries to open the file
     // if the file already open we move on
+    StateReturn write_to_file() {
+        using enum SubState;
+        assert(file_ptr->is_open());
+        if (file_ptr->get_mode() != File::Mode::READWRITE) {
+            view_ptr->notify("File cannot be written to.");
+            substate = FAIL;
+        } else if (!file_ptr->write(text_buffer->get_view())) {
+            view_ptr->notify("Error saving to file.");
+            substate = FAIL;
+        } else {
+            substate = SUCCESS;
+        }
+        return StateReturn(StateReturn::Transition::EXIT);
+    }
 };
 
 class FileOpenerState : public ProgramState {
@@ -585,7 +586,8 @@ class FileOpenerState : public ProgramState {
                         file_ptr->get_file_contents().value());
                 } else {
                     view_ptr->notify("File cannot be read from.");
-                    // don't overwrite file_ptr, don't mutate text_buffer_ptr
+                    // don't overwrite file_ptr, don't mutate
+                    // text_buffer_ptr
                 }
                 return StateReturn(StateReturn::Transition::EXIT);
             }
@@ -672,7 +674,8 @@ class TextState : public ProgramState {
     }
 
     StateReturn handle_input(ncinput nc_input) {
-        // we're going to manually handle some cases to save on lookup
+        // we're going to manually handle some cases to save on
+        // lookup
         if (nc_input.modifiers == 0 &&
             ((nc_input.id >= 32 && nc_input.id <= 255) ||
              nc_input.id == NCKEY_TAB)) {
@@ -1114,7 +1117,8 @@ struct Program {
                 break;
             }
 
-            // TODO: eventually we need to bubble up unhandled events
+            // TODO: eventually we need to bubble up unhandled
+            // events
             StateReturn sr = state_stack.active_state()->handle_event(ev);
             switch (sr.transition_type) {
                 using enum StateReturn::Transition;
