@@ -24,6 +24,7 @@ class PromptPlaneModel {
     std::string const *prompt_str;
     size_t const *cursor;
     std::string const *cmd_buf;
+    // TSTree const *ts_tree_ptr; // result of the parser
 
   public:
     PromptPlaneModel() {

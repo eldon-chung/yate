@@ -13,6 +13,8 @@
 #include <string>
 #include <vector>
 
+#include "tree-sitter/src/include/tree_sitter/api.h"
+
 #include <notcurses/notcurses.h>
 
 #include "EventQueue.h"
@@ -629,6 +631,8 @@ class TextState : public ProgramState {
     std::optional<Point> maybe_anchor_point;
     std::vector<std::string> clipboard;
     size_t plane_fd;
+    // TSParser *tsparser_ptr; // the stateful object
+    // TSTree *tstree_ptr; // the stateful tree used by the parser
 
   public:
     TextState(std::optional<std::string_view> maybe_filename)
