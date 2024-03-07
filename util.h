@@ -146,6 +146,8 @@ template <typename T> class Parser {
         default:
             break;
         }
+
+        return "";
     }
 
     static parser_fn_ptr_t get_parser_ptr(LANG lang) {
@@ -239,20 +241,24 @@ template <typename T> class Parser {
         assert(tree_ptr);
     }
 
-    // what do we want to take the update as?
-    void update(Point start_point, Point old_end_point, Point new_end_point) {
+    void update(Point start_point, Point old_end_point, Point new_end_point,
+                size_t start_byte, size_t old_end_byte, size_t new_end_byte) {
         assert(language.has_value());
         assert(tree_ptr);
 
-        TSInputEdit edit{.start_point = start_point,
+        TSInputEdit edit{.start_byte = (uint32_t)start_byte,
+                         .old_end_byte = (uint32_t)old_end_byte,
+                         .new_end_byte = (uint32_t)new_end_byte,
+                         .start_point = start_point,
                          .old_end_point = old_end_point,
                          .new_end_point = new_end_point};
+
         ts_tree_edit(tree_ptr, &edit);
         tree_ptr = ts_parser_parse(parser_ptr, tree_ptr,
                                    TSInput{.payload = (void *)buffer_ptr,
                                            .read = read_function_ptr,
                                            .encoding = TSInputEncodingUTF8});
-        // i think we need to invalidate the queries
+        // TODO: i think we need to invalidate the queries
     }
 
     // accesser methods for the tree
@@ -267,18 +273,18 @@ template <typename T> class Parser {
 
     std::vector<Capture> get_captures_within(Point start_boundary,
                                              Point end_boundary) const {
-        // TODO:
-        // load the query string
+
+        assert(language.has_value());
+
         TSParser *parser = ts_parser_new();
         ts_parser_set_language(parser_ptr, parser_function_ptr());
 
         TSQueryError error_type;
         uint32_t error_offset;
-
-        std::string lang_query_string = get_queries_str();
+        std::string_view lang_query_string = get_queries_str(language.value());
         TSQuery *ts_query = ts_query_new(
-            parser_function_ptr(), lang_query_string.c_str(),
-            lang_query_string.length(), &error_offset, &error_type);
+            parser_function_ptr(), lang_query_string.data(),
+            (unsigned int)lang_query_string.size(), &error_offset, &error_type);
 
         TSQueryCursor *ts_query_cursor = ts_query_cursor_new();
         ts_query_cursor_exec(ts_query_cursor, ts_query,
@@ -296,12 +302,13 @@ template <typename T> class Parser {
             Point end_point =
                 ts_node_end_point(ts_query_match.captures[cap_index].node);
 
-            if (start_point >= end_boundary || end_point <= start_boundary) {
-                continue;
-            }
             uint32_t size;
             const char *a = ts_query_capture_name_for_id(
                 ts_query, ts_query_match.captures[cap_index].index, &size);
+
+            if (start_point >= end_boundary || end_point <= start_boundary) {
+                continue;
+            }
 
             to_return.push_back({.start = start_point,
                                  .end = end_point,

@@ -9,26 +9,48 @@
 
 struct TextBuffer {
     std::vector<std::string> buffer;
+    std::vector<size_t> starting_byte_offset; // fenwick at some point bois?
 
   public:
     TextBuffer()
-        : buffer({""}) {
+        : buffer({""}),
+          starting_byte_offset({0}) {
+    }
+
+    void recompute_running_starting_byte_offset() {
+        starting_byte_offset.clear();
+        starting_byte_offset.reserve(buffer.size());
+
+        size_t cumulative_sum = 0;
+        for (size_t idx = 0; idx < buffer.size(); ++idx) {
+            starting_byte_offset.push_back(cumulative_sum);
+            cumulative_sum += buffer[idx].size() + 1;
+        }
+    }
+
+    size_t get_offset_from_point(Point point) const {
+        return starting_byte_offset.at(point.row) + point.col;
     }
 
     void load_contents(std::string_view contents) {
         buffer.clear();
+
         while (true) {
             size_t newl_pos = contents.find('\n');
             buffer.push_back(std::string{contents.substr(0, newl_pos)});
+
             if (newl_pos == std::string::npos) {
                 break;
             }
             contents = contents.substr(newl_pos + 1);
         }
+
+        recompute_running_starting_byte_offset();
     }
 
     void insert_char_at(Point cursor, char c) {
         buffer.at(cursor.row).insert(cursor.col++, 1, c);
+        recompute_running_starting_byte_offset();
     }
 
     void insert_newline_at(Point cursor) {
@@ -37,20 +59,20 @@ struct TextBuffer {
         buffer.insert(buffer.begin() + (long)cursor.row + 1,
                       std::move(next_line));
 
-        // then set the cursor
-        ++cursor.row;
-        cursor.col = 0;
+        recompute_running_starting_byte_offset();
     }
 
     void insert_backspace_at(Point cursor) {
+
         if (cursor.col > 0) {
             buffer.at(cursor.row).erase(--cursor.col, 1);
-
+            starting_byte_offset.at(cursor.row);
         } else if (cursor.row > 0) {
             cursor.col = buffer.at(--cursor.row).length();
             buffer.at(cursor.row).append(buffer.at(cursor.row + 1));
             buffer.erase(buffer.begin() + (long)cursor.row + 1);
         }
+        recompute_running_starting_byte_offset();
     }
 
     void insert_delete_at(Point cursor) {
@@ -61,6 +83,7 @@ struct TextBuffer {
             buffer.at(cursor.row) += buffer.at(cursor.row + 1);
             buffer.erase(buffer.begin() + (long)cursor.row + 1);
         }
+        recompute_running_starting_byte_offset();
     }
 
     std::vector<std::string_view> get_n_lines_at(size_t starting_row,
@@ -84,7 +107,7 @@ struct TextBuffer {
         return buffer.size();
     }
 
-    std::vector<std::string> get_lines(Point lp, Point rp) {
+    std::vector<std::string> get_lines(Point lp, Point rp) const {
         if (rp <= lp) {
             // nothing to return; should we instead return {""}?
             return {};
@@ -121,7 +144,9 @@ struct TextBuffer {
 
     Point replace_text_at(Point lp, Point rp, std::vector<std::string> lines) {
         remove_text_at(lp, rp);
-        return insert_text_at(lp, std::move(lines));
+        Point to_return = insert_text_at(lp, std::move(lines));
+        recompute_running_starting_byte_offset();
+        return to_return;
     }
 
     void remove_text_at(Point lp, Point rp) {
@@ -144,6 +169,8 @@ struct TextBuffer {
 
         // then delete one more line?
         insert_delete_at(lp);
+
+        recompute_running_starting_byte_offset();
     }
 
     Point insert_text_at(Point point, std::vector<std::string> lines) {
@@ -170,11 +197,13 @@ struct TextBuffer {
         buffer.insert(buffer.begin() + (ssize_t)point.row + 1,
                       lines.begin() + 1, lines.end());
 
+        recompute_running_starting_byte_offset();
         return final_insertion_point;
     }
 
     void insert_text_at(Point point, char ch) {
         insert_text_at(point, {{ch}});
+        recompute_running_starting_byte_offset();
     }
 
     std::vector<std::string> get_nth_line(size_t idx) const {

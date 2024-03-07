@@ -679,7 +679,8 @@ class TextState : public ProgramState {
     }
 
     TextPlaneModel get_text_plane_model() {
-        return TextPlaneModel{&text_buffer, &text_cursor, &maybe_anchor_point};
+        return TextPlaneModel{&text_buffer, &text_cursor, &maybe_anchor_point,
+                              &maybe_parser};
     }
 
     StateReturn handle_msg([[maybe_unused]] std::string_view msg) {
@@ -700,13 +701,23 @@ class TextState : public ProgramState {
              nc_input.id == NCKEY_TAB)) {
 
             Point update_start_point = text_cursor;
+            size_t start_byte =
+                text_buffer.get_offset_from_point(update_start_point);
+
             Point update_old_end_point = text_cursor;
+            size_t old_end_byte =
+                text_buffer.get_offset_from_point(update_old_end_point);
 
             if (maybe_anchor_point) {
                 auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
 
                 update_start_point = lp;
+                start_byte =
+                    text_buffer.get_offset_from_point(update_start_point);
+
                 update_old_end_point = rp;
+                old_end_byte =
+                    text_buffer.get_offset_from_point(update_old_end_point);
 
                 text_buffer.remove_text_at(lp, rp);
                 text_cursor = lp;
@@ -716,8 +727,12 @@ class TextState : public ProgramState {
             RIGHT_ARROW_HANDLER();
 
             Point update_new_end_point = text_cursor;
+            size_t new_end_byte =
+                text_buffer.get_offset_from_point(update_new_end_point);
+
             reparse_text(update_start_point, update_old_end_point,
-                         update_new_end_point);
+                         update_new_end_point, start_byte, old_end_byte,
+                         new_end_byte);
 
             view_ptr->chase_point(text_cursor);
             return StateReturn();
@@ -729,29 +744,45 @@ class TextState : public ProgramState {
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_BACKSPACE) {
             if (maybe_anchor_point) {
                 auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
+
                 Point update_start_point = lp;
                 Point update_old_end_point = rp;
+                size_t start_byte = text_buffer.get_offset_from_point(lp);
+                size_t old_end_byte = text_buffer.get_offset_from_point(rp);
 
                 text_buffer.remove_text_at(lp, rp);
                 text_cursor = lp;
 
                 Point update_new_end_point = text_cursor;
+                size_t new_end_byte =
+                    text_buffer.get_offset_from_point(update_new_end_point);
+
                 maybe_anchor_point.reset();
 
                 reparse_text(update_start_point, update_old_end_point,
-                             update_new_end_point);
+                             update_new_end_point, start_byte, old_end_byte,
+                             new_end_byte);
             } else {
                 Point old_pos = text_cursor;
 
-                Point update_old_end_point = old_pos;
+                Point update_old_end_point = text_cursor;
+                size_t old_end_byte =
+                    text_buffer.get_offset_from_point(update_old_end_point);
 
                 LEFT_ARROW_HANDLER();
                 Point update_start_point = text_cursor;
                 Point update_new_end_point = text_cursor;
+
+                size_t start_byte =
+                    text_buffer.get_offset_from_point(update_start_point);
+                size_t new_end_byte =
+                    text_buffer.get_offset_from_point(update_new_end_point);
+
                 text_buffer.insert_backspace_at(old_pos);
 
                 reparse_text(update_start_point, update_old_end_point,
-                             update_new_end_point);
+                             update_new_end_point, start_byte, old_end_byte,
+                             new_end_byte);
             }
             view_ptr->chase_point(text_cursor);
             return StateReturn();
@@ -761,13 +792,25 @@ class TextState : public ProgramState {
 
             Point update_start_point = text_cursor;
             Point update_old_end_point = text_cursor;
+
+            size_t start_byte =
+                text_buffer.get_offset_from_point(update_start_point);
+            size_t old_end_byte =
+                text_buffer.get_offset_from_point(update_old_end_point);
+
             Point update_new_end_point;
+            size_t new_end_byte;
 
             if (maybe_anchor_point) {
                 auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
 
                 update_start_point = lp;
                 update_old_end_point = rp;
+
+                start_byte =
+                    text_buffer.get_offset_from_point(update_start_point);
+                old_end_byte =
+                    text_buffer.get_offset_from_point(update_old_end_point);
 
                 text_buffer.remove_text_at(lp, rp);
                 text_cursor = lp;
@@ -776,9 +819,12 @@ class TextState : public ProgramState {
             text_buffer.insert_newline_at(text_cursor);
             RIGHT_ARROW_HANDLER();
             update_new_end_point = text_cursor;
+            new_end_byte =
+                text_buffer.get_offset_from_point(update_new_end_point);
 
             reparse_text(update_start_point, update_old_end_point,
-                         update_new_end_point);
+                         update_new_end_point, start_byte, old_end_byte,
+                         new_end_byte);
             view_ptr->chase_point(text_cursor);
             return StateReturn();
         }
@@ -791,21 +837,38 @@ class TextState : public ProgramState {
                 Point update_start_point = lp;
                 Point update_old_end_point = rp;
 
+                size_t start_byte =
+                    text_buffer.get_offset_from_point(update_start_point);
+                size_t old_end_byte =
+                    text_buffer.get_offset_from_point(update_old_end_point);
+
                 text_buffer.remove_text_at(lp, rp);
                 text_cursor = lp;
                 maybe_anchor_point.reset();
 
                 Point update_new_end_point = lp;
+                size_t new_end_byte =
+                    text_buffer.get_offset_from_point(update_new_end_point);
+
                 reparse_text(update_start_point, update_old_end_point,
-                             update_new_end_point);
+                             update_new_end_point, start_byte, old_end_byte,
+                             new_end_byte);
             } else {
                 Point update_start_point = text_cursor;
                 Point update_old_end_point =
                     move_point_right(update_start_point);
+
+                size_t start_byte =
+                    text_buffer.get_offset_from_point(update_start_point);
+
+                size_t old_end_byte =
+                    text_buffer.get_offset_from_point(update_old_end_point);
+
                 text_buffer.insert_delete_at(text_cursor);
 
                 reparse_text(update_start_point, update_old_end_point,
-                             update_start_point);
+                             update_start_point, start_byte, old_end_byte,
+                             start_byte);
             }
             view_ptr->chase_point(text_cursor);
             return StateReturn();
@@ -832,6 +895,9 @@ class TextState : public ProgramState {
                             &TextState::SHIFT_DOWN_ARROW_HANDLER);
         REGISTER_MODDED_KEY(NCKEY_UP, NCKEY_MOD_SHIFT,
                             &TextState::SHIFT_UP_ARROW_HANDLER);
+
+        // Ctrl P
+        REGISTER_MODDED_KEY('P', NCKEY_MOD_CTRL, &TextState::CTRL_P_HANDLER);
 
         // File manipulators
         REGISTER_MODDED_KEY('O', NCKEY_MOD_CTRL, &TextState::CTRL_O_HANDLER);
@@ -1111,14 +1177,16 @@ class TextState : public ProgramState {
 
     // call this to update the parser
     void reparse_text(Point start_point, Point old_end_point,
-                      Point new_end_point) {
+                      Point new_end_point, size_t start_byte,
+                      size_t old_end_byte, size_t new_end_byte) {
         // quit if there is no parser
         if (!maybe_parser) {
             return;
         }
 
         // TODO: get the update infomation here
-        maybe_parser->update(start_point, old_end_point, new_end_point);
+        maybe_parser->update(start_point, old_end_point, new_end_point,
+                             start_byte, old_end_byte, new_end_byte);
     }
 };
 

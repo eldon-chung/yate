@@ -14,18 +14,14 @@
 #include "util.h"
 
 #define BG_INITIALIZER(br, bg, bb) NCCHANNELS_INITIALIZER(0, 0, 0, br, bg, bb)
-#define HIGHLIGHT_RGB_TO_BG(fg_colour, bg_colour)                              \
-    NCCHANNELS_INITIALIZER(fg_colour.r, fg_colour.g, fg_colour.b, bg_colour.r, \
-                           bg_colour.r, bg_colour.r)
-#define ncstain_args(fg_colour, bg_colour)                                     \
-    HIGHLIGHT_RGB_TO_BG(fg_colour, bg_colour),                                 \
-        HIGHLIGHT_RGB_TO_BG(fg_colour, bg_colour),                             \
-        HIGHLIGHT_RGB_TO_BG(fg_colour, bg_colour),                             \
-        HIGHLIGHT_RGB_TO_BG(fg_colour, bg_colour)
+#define ncstain_args(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b)                       \
+    NCCHANNELS_INITIALIZER(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b),                \
+        NCCHANNELS_INITIALIZER(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b), \ 
+    NCCHANNELS_INITIALIZER(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b),                \
+        NCCHANNELS_INITIALIZER(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b)
 
-// simple mapper from a "syntax type index" into a an RGB that we style the text
-// with
-// For now we're hardcoding for the cpp syntax
+// simple mapper from a "syntax type index" into a an RGB that we style the
+// text with For now we're hardcoding for the cpp syntax
 struct Highlighter {
     struct Colour {
         uint8_t r;
@@ -48,17 +44,20 @@ struct Highlighter {
     enum class Style { UNDERLINE, BOLD, ITALICIZE };
 
     struct Highlight {
-        Colour fg_colour;
-        Colour bg_colour;
+        std::optional<Colour> fg_colour;
+        std::optional<Colour> bg_colour;
         uint16_t nc_style;
 
         Highlight()
-            : nc_style(NCSTYLE_NONE) {
+            : fg_colour(std::nullopt),
+              bg_colour(std::nullopt),
+              nc_style(NCSTYLE_NONE) {
         }
 
-        Highlight(Colour fgc, Colour bgc)
+        Highlight(Colour fgc)
             : fg_colour(fgc),
-              bg_colour(bgc) {
+              bg_colour(std::nullopt),
+              nc_style(NCSTYLE_NONE) {
         }
 
         Highlight(Colour fgc, Colour bgc, uint16_t ncs)
@@ -66,70 +65,94 @@ struct Highlighter {
               bg_colour(bgc),
               nc_style(ncs) {
         }
+
+        bool has_fg_colour() const {
+            return fg_colour.has_value();
+        }
+
+        bool has_bg_colour() const {
+            return bg_colour.has_value();
+        }
+
+        bool has_style() const {
+            return nc_style != NCSTYLE_NONE;
+        }
     };
 
-    static std::unordered_map<std::string_view, Highlight>
-        capturing_name_to_colour;
+    std::unordered_map<std::string_view, Highlight> capturing_name_to_colour;
 
     Highlight operator[]([[maybe_unused]] std::string_view capturing_name) {
-        return capturing_name_to_colour.at(capturing_name);
+        if (auto it = capturing_name_to_colour.find(capturing_name);
+            it != capturing_name_to_colour.end()) {
+            return it->second;
+        }
+        return Highlight();
     }
 
     // Hardcode the cpp values for now
     Highlighter() {
-        capturing_name_to_colour["attribute"] = {Colour{0x22, 0x3b, 0x7d},
-                                                 Colour{}};
-        capturing_name_to_colour["comment"] = {Colour{0x79, 0x79, 0x79},
-                                               Colour{}};
-        capturing_name_to_colour["type.builtin"] = {Colour{0x22, 0x3b, 0x7d},
-                                                    Colour{}};
+        capturing_name_to_colour["attribute"] = {
+            Colour{0x22, 0x3b, 0x7d},
+        };
+        capturing_name_to_colour["comment"] = {
+            Colour{0x79, 0x79, 0x79},
+        };
+        capturing_name_to_colour["type.builtin"] = {
+            Colour{0x22, 0x3b, 0x7d},
+        };
         capturing_name_to_colour["constant.builtin.boolean"] = {
-            Colour{0x25, 0x47, 0xa9}, Colour{}};
-        capturing_name_to_colour["type"] = {Colour{0x4e, 0xc9, 0xb0}, Colour{}};
+            Colour{0x25, 0x47, 0xa9}};
+        capturing_name_to_colour["type"] = {Colour{0x4e, 0xc9, 0xb0}};
         capturing_name_to_colour["type.enum.variant"] = {
-            Colour{0x4e, 0xc9, 0xb0}, Colour{}};
-        capturing_name_to_colour["string"] = {Colour{0xae, 0x66, 0x41},
-                                              Colour{}};
+            Colour{0x4e, 0xc9, 0xb0}};
+        capturing_name_to_colour["string"] = {
+            Colour{0xae, 0x66, 0x41},
+        };
         capturing_name_to_colour["constant.character"] = {
-            Colour{0xae, 0x66, 0x41}, Colour{}};
+            Colour{0xae, 0x66, 0x41}};
         capturing_name_to_colour["constant.character.escape"] = {
-            Colour{0xc3, 0x8a, 0x3c}, Colour{}};
+            Colour{0xc3, 0x8a, 0x3c}};
         capturing_name_to_colour["constant.numeric"] = {
-            Colour{0xaf, 0xca, 0x9f}, Colour{}};
-        capturing_name_to_colour["function"] = {Colour{0xdc, 0xdc, 0xaa},
-                                                Colour{}};
+            Colour{0xaf, 0xca, 0x9f}};
+        capturing_name_to_colour["function"] = {
+            Colour{0xdc, 0xdc, 0xaa},
+        };
         capturing_name_to_colour["function.special"] = {
-            Colour{0xc5, 0x86, 0xc0}, Colour{}};
-        capturing_name_to_colour["keyword"] = {Colour{0xc5, 0x86, 0xc0},
-                                               Colour{}};
-        capturing_name_to_colour["keyword.control"] = {Colour{0xa6, 0x79, 0xaf},
-                                                       Colour{}};
+            Colour{0xc5, 0x86, 0xc0}};
+        capturing_name_to_colour["keyword"] = {
+            Colour{0xc5, 0x86, 0xc0},
+        };
+        capturing_name_to_colour["keyword.control"] = {
+            Colour{0xa6, 0x79, 0xaf},
+        };
         capturing_name_to_colour["keyword.control.conditional"] = {
-            Colour{0xa6, 0x79, 0xaf}, Colour{}};
+            Colour{0xa6, 0x79, 0xaf}};
         capturing_name_to_colour["keyword.control.repeat"] = {
-            Colour{0xc5, 0x86, 0xc0}, Colour{}};
+            Colour{0xc5, 0x86, 0xc0}};
         capturing_name_to_colour["keyword.control.return"] = {
-            Colour{0xc5, 0x86, 0xc0}, Colour{}};
+            Colour{0xc5, 0x86, 0xc0}};
         capturing_name_to_colour["keyword.control.exception"] = {
-            Colour{0xc5, 0x86, 0xc0}, Colour{}};
+            Colour{0xc5, 0x86, 0xc0}};
         capturing_name_to_colour["keyword.directive"] = {
-            Colour{0xc5, 0x86, 0xc0}, Colour{}};
+            Colour{0xc5, 0x86, 0xc0}};
         capturing_name_to_colour["keyword.storage.modifier"] = {
-            Colour{0x22, 0x3b, 0x7d}, Colour{}};
+            Colour{0x22, 0x3b, 0x7d}};
         capturing_name_to_colour["keyword.storage.type"] = {
-            Colour{0x22, 0x3b, 0x7d}, Colour{}};
-        capturing_name_to_colour["namespace"] = {Colour{0x4e, 0xc8, 0xaf},
-                                                 Colour{}};
+            Colour{0x22, 0x3b, 0x7d}};
+        capturing_name_to_colour["namespace"] = {
+            Colour{0x4e, 0xc8, 0xaf},
+        };
         capturing_name_to_colour["punctuation.bracket"] = {
-            Colour{0xc5, 0x86, 0xc0}, Colour{}};
-        capturing_name_to_colour["variable"] = {Colour{0x8e, 0xd3, 0xf9},
-                                                Colour{}};
+            Colour{0xc5, 0x86, 0xc0}};
+        capturing_name_to_colour["variable"] = {
+            Colour{0x8e, 0xd3, 0xf9},
+        };
         capturing_name_to_colour["variable.builtin"] = {
-            Colour{0xc5, 0x86, 0xc0}, Colour{}};
+            Colour{0xc5, 0x86, 0xc0}};
         capturing_name_to_colour["variable.other.member"] = {
-            Colour{0x8e, 0xd3, 0xf9}, Colour{}};
+            Colour{0x8e, 0xd3, 0xf9}};
         capturing_name_to_colour["variable.parameter"] = {
-            Colour{0x8e, 0xd3, 0xf9}, Colour{}};
+            Colour{0x8e, 0xd3, 0xf9}};
     }
 };
 
@@ -172,20 +195,24 @@ class TextPlaneModel {
     TextBuffer const *text_buffer_ptr;
     Point const *cursor_ptr;
     std::optional<Point> const *anchor_cursor_ptr;
+    std::optional<Parser<TextBuffer>> const *maybe_parser;
     // TODO: resume here
 
   public:
     TextPlaneModel()
         : text_buffer_ptr(nullptr),
           cursor_ptr(nullptr),
-          anchor_cursor_ptr(nullptr) {
+          anchor_cursor_ptr(nullptr),
+          maybe_parser(nullptr) {
     }
 
-    TextPlaneModel(TextBuffer const *tbp, Point const *cur_p,
-                   std::optional<Point> const *acp)
+    TextPlaneModel(TextBuffer const *tbp, Point const *cp,
+                   std::optional<Point> const *acp,
+                   std::optional<Parser<TextBuffer>> const *mp)
         : text_buffer_ptr(tbp),
-          cursor_ptr(cur_p),
-          anchor_cursor_ptr(acp) {
+          cursor_ptr(cp),
+          anchor_cursor_ptr(acp),
+          maybe_parser(mp) {
     }
 
     std::vector<std::string_view> get_lines(size_t pos,
@@ -213,15 +240,19 @@ class TextPlaneModel {
         return text_buffer_ptr->num_lines();
     }
 
-    std::vector<Capture> get_captures_within([[maybe_unused]] Point tl,
-                                             [[maybe_unused]] Point br) const {
-        return {};
+    bool has_parser() const {
+        return maybe_parser->has_value();
+    }
+
+    std::vector<Capture> get_captures_within(Point tl, Point br) const {
+        assert(maybe_parser->has_value());
+        return maybe_parser->value().get_captures_within(tl, br);
     }
 };
 
 class TextPlane {
     // TODO: just stick this here for now
-    static Highlighter highlighter;
+    inline static Highlighter highlighter;
 
     friend class View;
 
@@ -256,7 +287,7 @@ class TextPlane {
         plane_ptr = ncplane_create(parent_plane, &text_plane_opts);
 
         nccell text_plane_base_cell = {.channels = NCCHANNELS_INITIALIZER(
-                                           0xff, 0xff, 0xff, 169, 169, 169)};
+                                           0xff, 0xff, 0xff, 0x2c, 0x2c, 0x2c)};
         ncplane_set_base_cell(plane_ptr, &text_plane_base_cell);
 
         // cursor plane opts
@@ -330,6 +361,9 @@ class TextPlane {
         auto row_to_tb_points = render_text();
         render_cursor(row_to_tb_points, wrap_status);
         render_selection(row_to_tb_points);
+        if (model.has_parser()) {
+            render_highlights(row_to_tb_points);
+        }
         render_line_numbers(row_to_tb_points);
     }
 
@@ -416,6 +450,43 @@ class TextPlane {
             return low;
         };
 
+        // need this for base colour things
+        nccell base_cell;
+        ncplane_base(plane_ptr, &base_cell);
+
+        auto apply_style = [=](size_t y, size_t x, size_t ylen, size_t xlen,
+                               Highlighter::Highlight hl) -> void {
+            // we first obtain the base fg and bg
+
+            unsigned fg_r, fg_g, fg_b, bg_r, bg_g, bg_b;
+            ncchannels_fg_rgb8(base_cell.channels, &fg_r, &fg_g, &fg_b);
+            ncchannels_bg_rgb8(base_cell.channels, &bg_r, &bg_g, &bg_b);
+
+            bool restain = false;
+            if (hl.has_fg_colour()) {
+                fg_r = hl.fg_colour->r;
+                fg_g = hl.fg_colour->g;
+                fg_b = hl.fg_colour->b;
+                restain = true;
+            }
+
+            if (hl.has_bg_colour()) {
+                bg_r = hl.bg_colour->r;
+                bg_g = hl.bg_colour->g;
+                bg_b = hl.bg_colour->b;
+                restain = true;
+            }
+
+            if (restain) {
+                ncplane_stain(plane_ptr, y, x, ylen, xlen,
+                              ncstain_args(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b));
+            }
+
+            if (hl.has_style()) {
+                ncplane_format(plane_ptr, y, x, ylen, xlen, hl.nc_style);
+            }
+        };
+
         // need to assert that the range intersects the screen
         assert(range_end >= row_to_tb_points.front().first &&
                range_start < row_to_tb_points.back().second);
@@ -433,12 +504,8 @@ class TextPlane {
                 (int)(range_start.col -
                       row_to_tb_points.at(starting_visual_row).first.col);
             int x_len = (int)(range_end.col - range_start.col);
-            ncplane_stain(
-                plane_ptr, (int)starting_visual_row, (int)starting_x, 1,
-                (unsigned int)x_len,
-                ncstain_args(highlight.fg_colour, highlight.bg_colour));
-            ncplane_format(plane_ptr, (int)starting_visual_row, (int)starting_x,
-                           1, (unsigned int)x_len, highlight.nc_style);
+            apply_style((int)starting_visual_row, (int)starting_x, 1,
+                        (unsigned int)x_len, highlight);
             return;
         }
 
@@ -448,27 +515,33 @@ class TextPlane {
                   row_to_tb_points.at(starting_visual_row).first.col);
         int x_len = (int)(row_to_tb_points.at(starting_visual_row).second.col -
                           range_start.col);
-        ncplane_stain(plane_ptr, (int)starting_visual_row, (int)starting_x, 1,
-                      (unsigned int)x_len,
-                      ncstain_args(highlight.fg_colour, highlight.bg_colour));
-        ncplane_format(plane_ptr, (int)starting_visual_row, (int)starting_x, 1,
-                       (unsigned int)x_len, highlight.nc_style);
+        apply_style((int)starting_visual_row, (int)starting_x, 1,
+                    (unsigned int)x_len, highlight);
 
-        ncplane_stain(plane_ptr, (int)ending_visual_row, 0, 1,
-                      (unsigned int)range_end.col,
-                      ncstain_args(highlight.fg_colour, highlight.bg_colour));
-        ncplane_format(plane_ptr, (int)ending_visual_row, 0, 1,
-                       (unsigned int)range_end.col, highlight.nc_style);
+        apply_style((int)ending_visual_row, 0, 1, (unsigned int)range_end.col,
+                    highlight);
 
         auto [num_rows, num_cols] = get_plane_yx_dim();
         // colour all rows in between
         for (size_t row_idx = starting_visual_row + 1;
              row_idx < ending_visual_row; ++row_idx) {
-            ncplane_stain(
-                plane_ptr, (int)row_idx, 0, 1, num_cols,
-                ncstain_args(highlight.fg_colour, highlight.bg_colour));
-            ncplane_format(plane_ptr, (int)row_idx, 0, 1, num_cols,
-                           highlight.nc_style);
+            apply_style((int)row_idx, 0, 1, num_cols, highlight);
+        }
+    }
+
+    void render_highlights(
+        std::vector<std::pair<Point, Point>> const &row_to_tb_points) {
+        // get highlight list from the model
+        std::vector<Capture> captures = model.get_captures_within(
+            row_to_tb_points.front().first, row_to_tb_points.back().second);
+
+        // TODO: I just want to verify that no point is going to be highlighted
+        // twice
+
+        for (auto capture : captures) {
+            apply_highlight_on_range(row_to_tb_points, capture.start,
+                                     capture.end,
+                                     highlighter[capture.capture_name]);
         }
     }
 
@@ -556,9 +629,7 @@ class TextPlane {
         }
 
         // else we now try to find the point
-        std::cerr << "calling find row" << std::endl;
         size_t visual_row_idx = find_row_given_tb_point(model.get_cursor());
-        std::cerr << "found row: " << visual_row_idx << std::endl;
 
         // turn cursor on
         ncplane_move_above(cursor_plane_ptr, plane_ptr);
@@ -580,10 +651,6 @@ class TextPlane {
         } else {
             // TODO: nowrap case
         }
-    }
-
-    void render_highlights() {
-        // model.get_captures_within();
     }
 
     std::vector<std::pair<Point, Point>> render_text() {
