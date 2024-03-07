@@ -14,6 +14,124 @@
 #include "util.h"
 
 #define BG_INITIALIZER(br, bg, bb) NCCHANNELS_INITIALIZER(0, 0, 0, br, bg, bb)
+#define HIGHLIGHT_RGB_TO_BG(fg_colour, bg_colour)                              \
+    NCCHANNELS_INITIALIZER(fg_colour.r, fg_colour.g, fg_colour.b, bg_colour.r, \
+                           bg_colour.r, bg_colour.r)
+#define ncstain_args(fg_colour, bg_colour)                                     \
+    HIGHLIGHT_RGB_TO_BG(fg_colour, bg_colour),                                 \
+        HIGHLIGHT_RGB_TO_BG(fg_colour, bg_colour),                             \
+        HIGHLIGHT_RGB_TO_BG(fg_colour, bg_colour),                             \
+        HIGHLIGHT_RGB_TO_BG(fg_colour, bg_colour)
+
+// simple mapper from a "syntax type index" into a an RGB that we style the text
+// with
+// For now we're hardcoding for the cpp syntax
+struct Highlighter {
+    struct Colour {
+        uint8_t r;
+        uint8_t g;
+        uint8_t b;
+
+        Colour()
+            : r(0),
+              g(0),
+              b(0) {
+        }
+
+        Colour(uint8_t r_, uint8_t g_, uint8_t b_)
+            : r(r_),
+              g(g_),
+              b(b_) {
+        }
+    };
+
+    enum class Style { UNDERLINE, BOLD, ITALICIZE };
+
+    struct Highlight {
+        Colour fg_colour;
+        Colour bg_colour;
+        uint16_t nc_style;
+
+        Highlight()
+            : nc_style(NCSTYLE_NONE) {
+        }
+
+        Highlight(Colour fgc, Colour bgc)
+            : fg_colour(fgc),
+              bg_colour(bgc) {
+        }
+
+        Highlight(Colour fgc, Colour bgc, uint16_t ncs)
+            : fg_colour(fgc),
+              bg_colour(bgc),
+              nc_style(ncs) {
+        }
+    };
+
+    static std::unordered_map<std::string_view, Highlight>
+        capturing_name_to_colour;
+
+    Highlight operator[]([[maybe_unused]] std::string_view capturing_name) {
+        return capturing_name_to_colour.at(capturing_name);
+    }
+
+    // Hardcode the cpp values for now
+    Highlighter() {
+        capturing_name_to_colour["attribute"] = {Colour{0x22, 0x3b, 0x7d},
+                                                 Colour{}};
+        capturing_name_to_colour["comment"] = {Colour{0x79, 0x79, 0x79},
+                                               Colour{}};
+        capturing_name_to_colour["type.builtin"] = {Colour{0x22, 0x3b, 0x7d},
+                                                    Colour{}};
+        capturing_name_to_colour["constant.builtin.boolean"] = {
+            Colour{0x25, 0x47, 0xa9}, Colour{}};
+        capturing_name_to_colour["type"] = {Colour{0x4e, 0xc9, 0xb0}, Colour{}};
+        capturing_name_to_colour["type.enum.variant"] = {
+            Colour{0x4e, 0xc9, 0xb0}, Colour{}};
+        capturing_name_to_colour["string"] = {Colour{0xae, 0x66, 0x41},
+                                              Colour{}};
+        capturing_name_to_colour["constant.character"] = {
+            Colour{0xae, 0x66, 0x41}, Colour{}};
+        capturing_name_to_colour["constant.character.escape"] = {
+            Colour{0xc3, 0x8a, 0x3c}, Colour{}};
+        capturing_name_to_colour["constant.numeric"] = {
+            Colour{0xaf, 0xca, 0x9f}, Colour{}};
+        capturing_name_to_colour["function"] = {Colour{0xdc, 0xdc, 0xaa},
+                                                Colour{}};
+        capturing_name_to_colour["function.special"] = {
+            Colour{0xc5, 0x86, 0xc0}, Colour{}};
+        capturing_name_to_colour["keyword"] = {Colour{0xc5, 0x86, 0xc0},
+                                               Colour{}};
+        capturing_name_to_colour["keyword.control"] = {Colour{0xa6, 0x79, 0xaf},
+                                                       Colour{}};
+        capturing_name_to_colour["keyword.control.conditional"] = {
+            Colour{0xa6, 0x79, 0xaf}, Colour{}};
+        capturing_name_to_colour["keyword.control.repeat"] = {
+            Colour{0xc5, 0x86, 0xc0}, Colour{}};
+        capturing_name_to_colour["keyword.control.return"] = {
+            Colour{0xc5, 0x86, 0xc0}, Colour{}};
+        capturing_name_to_colour["keyword.control.exception"] = {
+            Colour{0xc5, 0x86, 0xc0}, Colour{}};
+        capturing_name_to_colour["keyword.directive"] = {
+            Colour{0xc5, 0x86, 0xc0}, Colour{}};
+        capturing_name_to_colour["keyword.storage.modifier"] = {
+            Colour{0x22, 0x3b, 0x7d}, Colour{}};
+        capturing_name_to_colour["keyword.storage.type"] = {
+            Colour{0x22, 0x3b, 0x7d}, Colour{}};
+        capturing_name_to_colour["namespace"] = {Colour{0x4e, 0xc8, 0xaf},
+                                                 Colour{}};
+        capturing_name_to_colour["punctuation.bracket"] = {
+            Colour{0xc5, 0x86, 0xc0}, Colour{}};
+        capturing_name_to_colour["variable"] = {Colour{0x8e, 0xd3, 0xf9},
+                                                Colour{}};
+        capturing_name_to_colour["variable.builtin"] = {
+            Colour{0xc5, 0x86, 0xc0}, Colour{}};
+        capturing_name_to_colour["variable.other.member"] = {
+            Colour{0x8e, 0xd3, 0xf9}, Colour{}};
+        capturing_name_to_colour["variable.parameter"] = {
+            Colour{0x8e, 0xd3, 0xf9}, Colour{}};
+    }
+};
 
 enum class WrapStatus {
     WRAP,
@@ -54,6 +172,7 @@ class TextPlaneModel {
     TextBuffer const *text_buffer_ptr;
     Point const *cursor_ptr;
     std::optional<Point> const *anchor_cursor_ptr;
+    // TODO: resume here
 
   public:
     TextPlaneModel()
@@ -93,9 +212,17 @@ class TextPlaneModel {
     size_t num_lines() const {
         return text_buffer_ptr->num_lines();
     }
+
+    std::vector<Capture> get_captures_within([[maybe_unused]] Point tl,
+                                             [[maybe_unused]] Point br) const {
+        return {};
+    }
 };
 
 class TextPlane {
+    // TODO: just stick this here for now
+    static Highlighter highlighter;
+
     friend class View;
 
     TextPlaneModel model;
@@ -113,8 +240,8 @@ class TextPlane {
     TextPlane(ncplane *parent_plane, TextPlaneModel tpm, unsigned int num_rows,
               unsigned int num_cols)
         : model(tpm),
-          tl_corner({0, 0}),
-          br_corner({std::string::npos, std::string::npos}) {
+          tl_corner(Point{0, 0}),
+          br_corner(Point{std::string::npos, std::string::npos}) {
 
         // initially model is uninitialised
 
@@ -200,10 +327,10 @@ class TextPlane {
 
     void render(WrapStatus wrap_status) {
         // make this vector a fixed array to avoid allocations?
-        auto row_idxs = render_text();
-        render_cursor(row_idxs, wrap_status);
-        render_selection(row_idxs);
-        render_line_numbers(row_idxs);
+        auto row_to_tb_points = render_text();
+        render_cursor(row_to_tb_points, wrap_status);
+        render_selection(row_to_tb_points);
+        render_line_numbers(row_to_tb_points);
     }
 
     ssize_t num_visual_lines_from_tl(Point const &p, WrapStatus wrap_status) {
@@ -251,139 +378,230 @@ class TextPlane {
     }
 
   private:
-    void render_selection(std::vector<size_t> const &row_idxs) {
-        if (!model.has_anchor()) {
+    void apply_highlight_on_range(
+        std::vector<std::pair<Point, Point>> const &row_to_tb_points,
+        Point range_start, Point range_end,
+        [[maybe_unused]] Highlighter::Highlight highlight) {
+
+        auto compare_point_to_range = [](Point p,
+                                         std::pair<Point, Point> range) {
+            if (p < range.first) {
+                return -1;
+            } else if (p >= range.second) {
+                return 1;
+            } else {
+                assert(range.first <= p && p < range.second);
+                return 0;
+            }
+        };
+
+        auto find_row_containing_point = [&](Point p) {
+            size_t high = row_to_tb_points.size();
+            size_t low = 0;
+
+            while (low < high) {
+                size_t mid = (high - low) / 2 + low;
+                int cmp_res =
+                    compare_point_to_range(p, row_to_tb_points.at(mid));
+                if (cmp_res == 0) {
+                    return mid;
+                } else if (cmp_res == -1) {
+                    high = mid;
+                } else {
+                    assert(cmp_res == +1);
+                    low = mid + 1;
+                }
+            }
+            // assert(false);
+            return low;
+        };
+
+        // need to assert that the range intersects the screen
+        assert(range_end >= row_to_tb_points.front().first &&
+               range_start < row_to_tb_points.back().second);
+
+        // clamp the points if you must
+        range_start = std::max(range_start, row_to_tb_points.front().first);
+        range_end = std::min(
+            range_end, row_to_tb_points.back().second); // this is exclusive
+
+        size_t starting_visual_row = find_row_containing_point(range_start);
+        size_t ending_visual_row = find_row_containing_point(range_end);
+
+        if (starting_visual_row == ending_visual_row) {
+            int starting_x =
+                (int)(range_start.col -
+                      row_to_tb_points.at(starting_visual_row).first.col);
+            int x_len = (int)(range_end.col - range_start.col);
+            ncplane_stain(
+                plane_ptr, (int)starting_visual_row, (int)starting_x, 1,
+                (unsigned int)x_len,
+                ncstain_args(highlight.fg_colour, highlight.bg_colour));
+            ncplane_format(plane_ptr, (int)starting_visual_row, (int)starting_x,
+                           1, (unsigned int)x_len, highlight.nc_style);
             return;
         }
 
-        auto [row_count, col_count] = get_plane_yx_dim();
+        // colour the first and last row
+        int starting_x =
+            (int)(range_start.col -
+                  row_to_tb_points.at(starting_visual_row).first.col);
+        int x_len = (int)(row_to_tb_points.at(starting_visual_row).second.col -
+                          range_start.col);
+        ncplane_stain(plane_ptr, (int)starting_visual_row, (int)starting_x, 1,
+                      (unsigned int)x_len,
+                      ncstain_args(highlight.fg_colour, highlight.bg_colour));
+        ncplane_format(plane_ptr, (int)starting_visual_row, (int)starting_x, 1,
+                       (unsigned int)x_len, highlight.nc_style);
 
-        size_t num_lines_output = 0;
-        size_t curr_logical_row = tl_corner.row;
-        size_t curr_logical_col = tl_corner.col;
-        size_t row_indxs_idx = 1; // sigh naming
+        ncplane_stain(plane_ptr, (int)ending_visual_row, 0, 1,
+                      (unsigned int)range_end.col,
+                      ncstain_args(highlight.fg_colour, highlight.bg_colour));
+        ncplane_format(plane_ptr, (int)ending_visual_row, 0, 1,
+                       (unsigned int)range_end.col, highlight.nc_style);
 
-        auto [lp, rp] = std::minmax(model.get_cursor(), model.get_anchor());
-
-        while (num_lines_output < row_count &&
-               curr_logical_row < model.num_lines()) {
-
-            if (curr_logical_row > rp.row ||
-                (curr_logical_row == rp.row && curr_logical_col >= rp.col)) {
-                return;
-            }
-
-            if (curr_logical_row >= lp.row && curr_logical_row <= rp.row) {
-                size_t visual_col_l = 0;
-                size_t visual_col_r = col_count;
-
-                // if on same row and visual chunk
-                if (curr_logical_row == lp.row &&
-                    (curr_logical_col <= lp.col)) {
-                    visual_col_l =
-                        std::max(lp.col, curr_logical_col) - curr_logical_col;
-                }
-
-                if (curr_logical_row == rp.row && curr_logical_col <= rp.col) {
-                    visual_col_r =
-                        std::min(rp.col - curr_logical_col, (size_t)col_count);
-                }
-
-                if (visual_col_l < visual_col_r) {
-                    ncplane_stain(
-                        plane_ptr, (int)num_lines_output, (int)visual_col_l, 1,
-                        (unsigned int)(visual_col_r - visual_col_l),
-                        NCCHANNELS_INITIALIZER(0, 0, 0, 128, 128, 128),
-                        NCCHANNELS_INITIALIZER(0, 0, 0, 128, 128, 128),
-                        NCCHANNELS_INITIALIZER(0, 0, 0, 128, 128, 128),
-                        NCCHANNELS_INITIALIZER(0, 0, 0, 128, 128, 128));
-                    ncplane_format(plane_ptr, (int)num_lines_output,
-                                   (int)visual_col_l, 1,
-                                   (unsigned int)(visual_col_r - visual_col_l),
-                                   NCSTYLE_UNDERLINE);
-                    // TODO: show '⏎' when the selection crosses a newline?
-                }
-            }
-
-            ++num_lines_output;
-
-            if (row_indxs_idx < row_idxs.size() &&
-                num_lines_output >= row_idxs[row_indxs_idx]) {
-                ++curr_logical_row;
-                curr_logical_col = 0;
-                ++row_indxs_idx;
-            } else {
-                curr_logical_col += col_count;
-            }
+        auto [num_rows, num_cols] = get_plane_yx_dim();
+        // colour all rows in between
+        for (size_t row_idx = starting_visual_row + 1;
+             row_idx < ending_visual_row; ++row_idx) {
+            ncplane_stain(
+                plane_ptr, (int)row_idx, 0, 1, num_cols,
+                ncstain_args(highlight.fg_colour, highlight.bg_colour));
+            ncplane_format(plane_ptr, (int)row_idx, 0, 1, num_cols,
+                           highlight.nc_style);
         }
     }
 
-    void render_line_numbers(std::vector<size_t> const &row_idxs) {
+    void render_selection(
+        std::vector<std::pair<Point, Point>> const &row_to_tb_points) {
+        if (!model.has_anchor()) {
+            return;
+        }
+        auto [lp, rp] = std::minmax(model.get_anchor(), model.get_cursor());
+        Highlighter::Highlight selection_highlight = Highlighter::Highlight{
+            Highlighter::Colour{0, 0, 0}, Highlighter::Colour{0xff, 0xff, 0xff},
+            NCSTYLE_UNDERLINE};
+        apply_highlight_on_range(row_to_tb_points, lp, rp, selection_highlight);
+    }
+
+    void
+    render_line_numbers(std::vector<std::pair<Point, Point>> const &row_idxs) {
         // TODO: on the first number, indicate if there's more to that line
         // being wrapped from the previous visual row
+
         ncplane_erase(line_number_plane_ptr);
+        size_t curr_logical_row = std::string::npos;
+
         char out_str[5];
-        for (size_t idx = 0; idx < row_idxs.size(); ++idx) {
-            size_t local_offset = row_idxs[idx];
-            snprintf(out_str, 5, "%zu", tl_corner.row + idx + 1);
-            ncplane_putnstr_yx(line_number_plane_ptr, (int)(local_offset), 0, 3,
-                               out_str);
+        for (size_t visual_row_idx = 0; visual_row_idx < row_idxs.size();
+             ++visual_row_idx) {
+            if (curr_logical_row != row_idxs.at(visual_row_idx).first.row) {
+                curr_logical_row = row_idxs.at(visual_row_idx).first.row;
+                snprintf(out_str, 5, "%zu", curr_logical_row + 1);
+                ncplane_putnstr_yx(line_number_plane_ptr, (int)(visual_row_idx),
+                                   0, 3, out_str);
+            }
         }
     }
 
-    void render_cursor(std::vector<size_t> const &row_idxs,
-                       WrapStatus wrap_status) {
-        // get the text_plane size
-        auto [row_count, col_count] = get_plane_yx_dim();
-        assert(model.get_cursor().row >= tl_corner.row);
-        assert(model.get_cursor().row < tl_corner.row + row_count);
+    void
+    render_cursor(std::vector<std::pair<Point, Point>> const &row_to_tb_points,
+                  WrapStatus wrap_status) {
+
+        // returns: -1 if p is to the left, 0 if within, and 1 if p is to the
+        // right
+        auto compare_points = [](Point p,
+                                 std::pair<Point, Point> range) -> int {
+            if (p < range.first) {
+                return -1;
+            } else if (p >= range.second) {
+                return 1;
+            } else {
+                assert(p >= range.first && p < range.second);
+                return 0;
+            }
+        };
+
+        // for a cursor we need to find the highest index for which
+        // point is >= of the range in that index
+        auto find_row_given_tb_point = [&](Point p) -> size_t {
+            size_t high = row_to_tb_points.size(); // exclusive
+            size_t low = 0;
+            size_t mid = (high - low) / 2 + low;
+
+            while (low + 1 < high) {
+                mid = (high - low) / 2 + low;
+                int cmp_res = compare_points(p, row_to_tb_points.at(mid));
+                if (cmp_res == 0) {
+                    return mid;
+                }
+
+                if (cmp_res == 1) {
+                    // we need to keep this point
+                    low = mid;
+                } else {
+                    assert(cmp_res == -1);
+                    // don't keep this point
+                    high = mid; // note: high is exclusive
+                }
+            }
+            return low;
+        };
+
+        // if our text plane right now doesn't contain the cursor
+        // we just hide the cursor and return;
+        if (model.get_cursor() > row_to_tb_points.back().second) {
+            ncplane_move_below(cursor_plane_ptr, plane_ptr);
+            return;
+        }
+
+        // else we now try to find the point
+        std::cerr << "calling find row" << std::endl;
+        size_t visual_row_idx = find_row_given_tb_point(model.get_cursor());
+        std::cerr << "found row: " << visual_row_idx << std::endl;
+
+        // turn cursor on
+        ncplane_move_above(cursor_plane_ptr, plane_ptr);
+
+        auto [num_rows, num_cols] = get_plane_yx_dim();
 
         if (wrap_status == WrapStatus::WRAP) {
-            if (model.at(model.get_cursor().row).empty()) {
-                ncplane_move_yx(
-                    cursor_plane_ptr,
-                    (int)row_idxs.at(model.get_cursor().row - tl_corner.row),
-                    0);
+            // special case: need to deal with the case the cursor is at the end
+            // of line at the screen
+            if ((model.get_cursor().col -
+                 row_to_tb_points.at(visual_row_idx).first.col) == num_cols) {
+                ncplane_move_yx(cursor_plane_ptr, (int)visual_row_idx + 1, 0);
             } else {
-                // TODO: not sure this is entirely correct
-                size_t starting_row =
-                    row_idxs.at(model.get_cursor().row - tl_corner.row);
-                starting_row +=
-                    (model.get_cursor().col - tl_corner.col) / col_count;
-
-                int target_col =
-                    (model.at(model.get_cursor().row).empty())
-                        ? 0
-                        : (int)(model.get_cursor().col % col_count);
-                ncplane_move_yx(cursor_plane_ptr, (int)starting_row,
-                                target_col);
+                ncplane_move_yx(
+                    cursor_plane_ptr, (int)visual_row_idx,
+                    (int)(model.get_cursor().col -
+                          row_to_tb_points.at(visual_row_idx).first.col));
             }
         } else {
             // TODO: nowrap case
         }
     }
 
-    std::vector<size_t> render_text() {
-        ncplane_erase(plane_ptr);
+    void render_highlights() {
+        // model.get_captures_within();
+    }
 
+    std::vector<std::pair<Point, Point>> render_text() {
+        ncplane_erase(plane_ptr);
         // get the text_plane size
         auto [row_count, col_count] = get_plane_yx_dim();
-        std::vector<size_t> line_rows;
-        line_rows.reserve(row_count);
+
+        std::vector<std::pair<Point, Point>> to_return;
+        to_return.reserve(row_count);
 
         size_t num_lines_output = 0;
 
         size_t curr_logical_row = tl_corner.row;
         size_t curr_logical_col = tl_corner.col;
 
-        line_rows.push_back(0);
-
+        Point line_start = tl_corner;
         while (num_lines_output < row_count &&
                curr_logical_row < model.num_lines()) {
-
-            if (curr_logical_col == 0 && num_lines_output > 0) {
-                line_rows.push_back(num_lines_output);
-            }
 
             std::string_view curr_line = model.at(curr_logical_row);
             assert(tl_corner.col <= curr_line.size());
@@ -391,6 +609,10 @@ class TextPlane {
             int num_written = ncplane_putnstr_yx(
                 plane_ptr, (int)num_lines_output, 0, col_count,
                 curr_line.data() + curr_logical_col);
+
+            Point line_end = line_start;
+            line_end.col += (size_t)num_written;
+            to_return.push_back({line_start, line_end});
 
             if (num_written < 0) {
                 // handle error cases?
@@ -409,10 +631,11 @@ class TextPlane {
                 curr_logical_col = 0;
                 ++curr_logical_row;
             }
+            line_start = Point{curr_logical_row, curr_logical_col};
         }
 
-        if (line_rows.empty()) {
-            line_rows.push_back(0);
+        if (to_return.empty()) {
+            to_return.push_back({{0, 0}, {0, 0}});
         }
 
         // set br_corner only when screen is filled
@@ -423,7 +646,7 @@ class TextPlane {
             br_corner.col = std::string::npos;
         }
 
-        return line_rows;
+        return to_return;
     }
 
     std::pair<unsigned int, unsigned int> get_yx_dim(ncplane *ptr) const {

@@ -13,9 +13,8 @@
 #include <string>
 #include <vector>
 
-#include "tree-sitter/src/include/tree_sitter/api.h"
-
 #include <notcurses/notcurses.h>
+#include <tree_sitter/api.h>
 
 #include "EventQueue.h"
 #include "File.h"
@@ -593,7 +592,7 @@ class FileOpenerState : public ProgramState {
             } else {
                 text_buffer_ptr->load_contents(maybe_file_contents.value());
                 // for now we just reset this at {0, 0}
-                *text_buffer_cursor_ptr = {0, 0};
+                *text_buffer_cursor_ptr = Point{0, 0};
             }
             return StateReturn(StateReturn::Transition::EXIT);
         }
@@ -631,8 +630,9 @@ class TextState : public ProgramState {
     std::optional<Point> maybe_anchor_point;
     std::vector<std::string> clipboard;
     size_t plane_fd;
-    // TSParser *tsparser_ptr; // the stateful object
-    // TSTree *tstree_ptr; // the stateful tree used by the parser
+
+    // objects used for parsing
+    std::optional<Parser<TextBuffer>> maybe_parser;
 
   public:
     TextState(std::optional<std::string_view> maybe_filename)
@@ -668,6 +668,16 @@ class TextState : public ProgramState {
         os << "{TextState }";
     }
 
+    void set_parse_lang(Parser<TextBuffer>::LANG parser_language) {
+        if (!maybe_parser) {
+            maybe_parser = Parser<TextBuffer>{&text_buffer, read_text_buffer};
+        }
+
+        maybe_parser->set_language(parser_language);
+        // need to trigger first time parse
+        maybe_parser->parse_buffer();
+    }
+
     TextPlaneModel get_text_plane_model() {
         return TextPlaneModel{&text_buffer, &text_cursor, &maybe_anchor_point};
     }
@@ -689,14 +699,26 @@ class TextState : public ProgramState {
             ((nc_input.id >= 32 && nc_input.id <= 255) ||
              nc_input.id == NCKEY_TAB)) {
 
+            Point update_start_point = text_cursor;
+            Point update_old_end_point = text_cursor;
+
             if (maybe_anchor_point) {
                 auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
+
+                update_start_point = lp;
+                update_old_end_point = rp;
+
                 text_buffer.remove_text_at(lp, rp);
                 text_cursor = lp;
                 maybe_anchor_point.reset();
             }
             text_buffer.insert_char_at(text_cursor, (char)nc_input.id);
             RIGHT_ARROW_HANDLER();
+
+            Point update_new_end_point = text_cursor;
+            reparse_text(update_start_point, update_old_end_point,
+                         update_new_end_point);
+
             view_ptr->chase_point(text_cursor);
             return StateReturn();
         }
@@ -707,39 +729,83 @@ class TextState : public ProgramState {
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_BACKSPACE) {
             if (maybe_anchor_point) {
                 auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
+                Point update_start_point = lp;
+                Point update_old_end_point = rp;
+
                 text_buffer.remove_text_at(lp, rp);
                 text_cursor = lp;
+
+                Point update_new_end_point = text_cursor;
                 maybe_anchor_point.reset();
+
+                reparse_text(update_start_point, update_old_end_point,
+                             update_new_end_point);
             } else {
                 Point old_pos = text_cursor;
+
+                Point update_old_end_point = old_pos;
+
                 LEFT_ARROW_HANDLER();
+                Point update_start_point = text_cursor;
+                Point update_new_end_point = text_cursor;
                 text_buffer.insert_backspace_at(old_pos);
+
+                reparse_text(update_start_point, update_old_end_point,
+                             update_new_end_point);
             }
             view_ptr->chase_point(text_cursor);
             return StateReturn();
         }
 
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_ENTER) {
+
+            Point update_start_point = text_cursor;
+            Point update_old_end_point = text_cursor;
+            Point update_new_end_point;
+
             if (maybe_anchor_point) {
                 auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
+
+                update_start_point = lp;
+                update_old_end_point = rp;
+
                 text_buffer.remove_text_at(lp, rp);
                 text_cursor = lp;
                 maybe_anchor_point.reset();
             }
             text_buffer.insert_newline_at(text_cursor);
             RIGHT_ARROW_HANDLER();
+            update_new_end_point = text_cursor;
+
+            reparse_text(update_start_point, update_old_end_point,
+                         update_new_end_point);
             view_ptr->chase_point(text_cursor);
             return StateReturn();
         }
 
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_DEL) {
+
             if (maybe_anchor_point) {
                 auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
+
+                Point update_start_point = lp;
+                Point update_old_end_point = rp;
+
                 text_buffer.remove_text_at(lp, rp);
                 text_cursor = lp;
                 maybe_anchor_point.reset();
+
+                Point update_new_end_point = lp;
+                reparse_text(update_start_point, update_old_end_point,
+                             update_new_end_point);
             } else {
+                Point update_start_point = text_cursor;
+                Point update_old_end_point =
+                    move_point_right(update_start_point);
                 text_buffer.insert_delete_at(text_cursor);
+
+                reparse_text(update_start_point, update_old_end_point,
+                             update_start_point);
             }
             view_ptr->chase_point(text_cursor);
             return StateReturn();
@@ -759,13 +825,13 @@ class TextState : public ProgramState {
 
         // Shift Arrow
         REGISTER_MODDED_KEY(NCKEY_LEFT, NCKEY_MOD_SHIFT,
-                            &TextState::LEFT_ARROW_HANDLER);
+                            &TextState::SHIFT_LEFT_ARROW_HANDLER);
         REGISTER_MODDED_KEY(NCKEY_RIGHT, NCKEY_MOD_SHIFT,
-                            &TextState::RIGHT_ARROW_HANDLER);
+                            &TextState::SHIFT_RIGHT_ARROW_HANDLER);
         REGISTER_MODDED_KEY(NCKEY_DOWN, NCKEY_MOD_SHIFT,
-                            &TextState::DOWN_ARROW_HANDLER);
+                            &TextState::SHIFT_DOWN_ARROW_HANDLER);
         REGISTER_MODDED_KEY(NCKEY_UP, NCKEY_MOD_SHIFT,
-                            &TextState::UP_ARROW_HANDLER);
+                            &TextState::SHIFT_UP_ARROW_HANDLER);
 
         // File manipulators
         REGISTER_MODDED_KEY('O', NCKEY_MOD_CTRL, &TextState::CTRL_O_HANDLER);
@@ -932,6 +998,12 @@ class TextState : public ProgramState {
         return StateReturn();
     }
 
+    // Parse
+    StateReturn CTRL_P_HANDLER() {
+        set_parse_lang(Parser<TextBuffer>::LANG::CPP);
+        return StateReturn();
+    }
+
     // Handlers that cause state changes
 
     // Open
@@ -1035,6 +1107,18 @@ class TextState : public ProgramState {
             to_return.col = text_buffer.at(--to_return.row).size();
         }
         return to_return;
+    }
+
+    // call this to update the parser
+    void reparse_text(Point start_point, Point old_end_point,
+                      Point new_end_point) {
+        // quit if there is no parser
+        if (!maybe_parser) {
+            return;
+        }
+
+        // TODO: get the update infomation here
+        maybe_parser->update(start_point, old_end_point, new_end_point);
     }
 };
 

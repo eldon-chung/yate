@@ -191,3 +191,40 @@ struct TextBuffer {
         return to_ret;
     }
 };
+
+inline const char *read_text_buffer(void *payload,
+                                    [[maybe_unused]] uint32_t byte_offset,
+                                    TSPoint position, uint32_t *bytes_read) {
+    // fprintf(stderr, "requested position: %u, %u\n", position.row,
+    //         position.column);
+
+    TextBuffer *text_buffer_ptr = (TextBuffer *)payload;
+    // I'm guessing I only need to use either of the 2?
+
+    if (position.row >= text_buffer_ptr->num_lines() ||
+        (position.row == text_buffer_ptr->num_lines() - 1 &&
+         position.column >=
+             text_buffer_ptr->get_nth_line(position.row).size())) {
+        // fprintf(stderr, "returning EOF\n");
+        *bytes_read = 0;
+        return "\0";
+    }
+
+    if (position.column == text_buffer_ptr->at(position.row).size()) {
+        // this __should__ be safe because it should point to somewhere in
+        // globals, rather than point to stack
+        // fprintf(stderr, "returning newline\n");
+        *bytes_read = 1;
+        return "\n";
+    }
+
+    assert(position.column < text_buffer_ptr->at(position.row).size());
+    const char *corresponding_byte = text_buffer_ptr->at(position.row).data();
+    corresponding_byte += position.column;
+    *bytes_read =
+        (uint32_t)text_buffer_ptr->at(position.row).size() - position.column;
+    // fprintf(stderr, "giving str: %s\n", corresponding_byte);
+    // fprintf(stderr, "bytes read: %u\n", *bytes_read);
+
+    return corresponding_byte;
+}

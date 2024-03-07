@@ -1,0 +1,140 @@
+{
+   "highlight_styles" : {
+        "attribute" : { 
+            "fg_rgb" : "223b7d",
+            "bg_rgb" : "000000",
+            "style" : null
+        },
+        "comment" : { 
+            "fg_rgb" : "797979",
+            "bg_rgb" : null,
+            "style" : null
+        },    
+        "type.builtin" : {
+            "fg_rgb" : "223b7d",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "constant.builtin.boolean" : {
+            "fg_rgb" : "2547a9",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "type" : {
+            "fg_rgb" : "4ec9b0",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "type.enum.variant" : {
+            "fg_rgb" : "4ec9b0",
+            "bg_rgb" : null,
+            "style" : null
+        }, 
+        "string" : {
+            "fg_rgb" : "ae6641",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "constant.character" : {
+            "fg_rgb" : "ae6641",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "constant.character.escape" : {
+            "fg_rgb" : "c38a3c",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "constant.numeric" : {
+            "fg_rgb" : "afca9f",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "function" : {
+            "fg_rgb" : "dcdcaa",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "function.special" : {
+            "fg_rgb" : "c586c0",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "keyword" : {
+            "fg_rgb" : "c586c0",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "keyword.control" : {
+            "fg_rgb" : "a679af",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "keyword.control.conditional" : {
+            "fg_rgb" : "a679af",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "keyword.control.repeat" : {
+            "fg_rgb" : "c586c0",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "keyword.control.return" : {
+            "fg_rgb" : "c586c0",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "keyword.control.exception" : {
+            "fg_rgb" : "c586c0",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "keyword.directive" : {
+            "fg_rgb" : "c586c0",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "keyword.storage.modifier" : {
+            "fg_rgb" : "223b7d",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "keyword.storage.type" : {
+            "fg_rgb" : "223b7d",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "namespace" : {
+            "fg_rgb" : "4ec8af",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "punctuation.bracket" : {
+            "fg_rgb" : "c586c0",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "variable" : {
+            "fg_rgb" : "8ed3f9",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "variable.builtin" : {
+            "fg_rgb" : "c586c0",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "variable.other.member" : {
+            "fg_rgb" : "8ed3f9",
+            "bg_rgb" : null,
+            "style" : null
+        },
+        "variable.parameter" : {
+            "fg_rgb" : "8ed3f9",
+            "bg_rgb" : null,
+            "style" : null
+        }
+    }
+}
+
