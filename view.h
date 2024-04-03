@@ -7,6 +7,7 @@
 #include <notcurses/notcurses.h>
 
 #include <algorithm>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -16,8 +17,8 @@
 #define BG_INITIALIZER(br, bg, bb) NCCHANNELS_INITIALIZER(0, 0, 0, br, bg, bb)
 #define ncstain_args(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b)                       \
     NCCHANNELS_INITIALIZER(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b),                \
-        NCCHANNELS_INITIALIZER(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b), \ 
-    NCCHANNELS_INITIALIZER(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b),                \
+        NCCHANNELS_INITIALIZER(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b),            \
+        NCCHANNELS_INITIALIZER(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b),            \
         NCCHANNELS_INITIALIZER(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b)
 
 // simple mapper from a "syntax type index" into a an RGB that we style the
@@ -196,7 +197,6 @@ class TextPlaneModel {
     Point const *cursor_ptr;
     std::optional<Point> const *anchor_cursor_ptr;
     std::optional<Parser<TextBuffer>> const *maybe_parser;
-    // TODO: resume here
 
   public:
     TextPlaneModel()
@@ -417,36 +417,25 @@ class TextPlane {
         Point range_start, Point range_end,
         [[maybe_unused]] Highlighter::Highlight highlight) {
 
-        auto compare_point_to_range = [](Point p,
-                                         std::pair<Point, Point> range) {
-            if (p < range.first) {
-                return -1;
-            } else if (p >= range.second) {
-                return 1;
-            } else {
-                assert(range.first <= p && p < range.second);
-                return 0;
-            }
-        };
-
-        auto find_row_containing_point = [&](Point p) {
-            size_t high = row_to_tb_points.size();
+        // gives the index into row_to_tb_points
+        auto find_visual_row_containing_point = [&](Point p) -> size_t {
             size_t low = 0;
-
-            while (low < high) {
+            size_t high = row_to_tb_points.size();
+            while (low + 1 < high) {
                 size_t mid = (high - low) / 2 + low;
-                int cmp_res =
-                    compare_point_to_range(p, row_to_tb_points.at(mid));
-                if (cmp_res == 0) {
-                    return mid;
-                } else if (cmp_res == -1) {
+
+                if (row_to_tb_points[mid].first <= p &&
+                    p <= row_to_tb_points[mid].second) {
+                    low = mid;
+                    break;
+                }
+
+                if (p < row_to_tb_points[mid].second) {
                     high = mid;
                 } else {
-                    assert(cmp_res == +1);
-                    low = mid + 1;
+                    low = mid;
                 }
             }
-            // assert(false);
             return low;
         };
 
@@ -454,8 +443,9 @@ class TextPlane {
         nccell base_cell;
         ncplane_base(plane_ptr, &base_cell);
 
-        auto apply_style = [=](size_t y, size_t x, size_t ylen, size_t xlen,
-                               Highlighter::Highlight hl) -> void {
+        auto apply_style = [=, this](size_t y, size_t x, size_t ylen,
+                                     size_t xlen,
+                                     Highlighter::Highlight hl) -> void {
             // we first obtain the base fg and bg
 
             unsigned fg_r, fg_g, fg_b, bg_r, bg_g, bg_b;
@@ -478,12 +468,14 @@ class TextPlane {
             }
 
             if (restain) {
-                ncplane_stain(plane_ptr, y, x, ylen, xlen,
+                ncplane_stain(plane_ptr, (int)y, (int)x, (unsigned int)ylen,
+                              (unsigned int)xlen,
                               ncstain_args(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b));
             }
 
             if (hl.has_style()) {
-                ncplane_format(plane_ptr, y, x, ylen, xlen, hl.nc_style);
+                ncplane_format(plane_ptr, (int)y, (int)x, (unsigned int)ylen,
+                               (unsigned int)xlen, hl.nc_style);
             }
         };
 
@@ -496,15 +488,16 @@ class TextPlane {
         range_end = std::min(
             range_end, row_to_tb_points.back().second); // this is exclusive
 
-        size_t starting_visual_row = find_row_containing_point(range_start);
-        size_t ending_visual_row = find_row_containing_point(range_end);
+        size_t starting_visual_row =
+            find_visual_row_containing_point(range_start);
+        size_t ending_visual_row = find_visual_row_containing_point(range_end);
 
         if (starting_visual_row == ending_visual_row) {
             int starting_x =
                 (int)(range_start.col -
                       row_to_tb_points.at(starting_visual_row).first.col);
             int x_len = (int)(range_end.col - range_start.col);
-            apply_style((int)starting_visual_row, (int)starting_x, 1,
+            apply_style(starting_visual_row, (size_t)starting_x, 1,
                         (unsigned int)x_len, highlight);
             return;
         }
@@ -515,17 +508,18 @@ class TextPlane {
                   row_to_tb_points.at(starting_visual_row).first.col);
         int x_len = (int)(row_to_tb_points.at(starting_visual_row).second.col -
                           range_start.col);
-        apply_style((int)starting_visual_row, (int)starting_x, 1,
+        apply_style(starting_visual_row, (size_t)starting_x, 1,
                     (unsigned int)x_len, highlight);
-
-        apply_style((int)ending_visual_row, 0, 1, (unsigned int)range_end.col,
+        std::cerr << "last visual_row: " << ending_visual_row << std::endl;
+        std::cerr << "... corresponding col: " << range_end.col << std::endl;
+        apply_style(ending_visual_row, 0, 1, (unsigned int)range_end.col,
                     highlight);
 
         auto [num_rows, num_cols] = get_plane_yx_dim();
         // colour all rows in between
         for (size_t row_idx = starting_visual_row + 1;
              row_idx < ending_visual_row; ++row_idx) {
-            apply_style((int)row_idx, 0, 1, num_cols, highlight);
+            apply_style(row_idx, 0, 1, num_cols, highlight);
         }
     }
 
@@ -554,6 +548,8 @@ class TextPlane {
         Highlighter::Highlight selection_highlight = Highlighter::Highlight{
             Highlighter::Colour{0, 0, 0}, Highlighter::Colour{0xff, 0xff, 0xff},
             NCSTYLE_UNDERLINE};
+        std::cerr << "render selection lp: " << lp << std::endl;
+        std::cerr << "render selection rp: " << rp << std::endl;
         apply_highlight_on_range(row_to_tb_points, lp, rp, selection_highlight);
     }
 

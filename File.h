@@ -8,9 +8,11 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <assert.h>
 #include <iostream>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 // TODO: refactor API at some point.

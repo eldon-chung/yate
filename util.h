@@ -12,6 +12,8 @@
 #include <tree_sitter/api.h>
 // #include "tree_sitter/languages/languages.h"
 
+#include "File.h"
+
 struct Point {
 
     size_t row;

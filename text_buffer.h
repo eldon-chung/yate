@@ -1,56 +1,359 @@
 #pragma once
 
 #include <assert.h>
+#include <stdlib.h>
 
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "util.h"
 
+// an ordered stats tree to help maintain starting_byte_offsets;
+// the implementation underneath is a treap
+class LineSizeTree {
+
+    struct Node {
+        size_t line_size;
+
+        // rest of these are for our bookkeeping
+        size_t tree_size;
+        size_t priority;
+        size_t total_line_size;
+
+        Node *left_node = nullptr;
+        Node *right_node = nullptr;
+        // Node *parent_node;
+
+        Node(size_t ls, size_t ts, size_t p)
+            : line_size(ls),
+              tree_size(ts),
+              priority(p),
+              total_line_size(ls) {
+        }
+
+        ~Node() {
+            if (left_node) {
+                delete left_node;
+            }
+
+            if (right_node) {
+                delete right_node;
+            }
+        }
+
+        size_t left_size() const {
+            if (left_node) {
+                return left_node->tree_size;
+            }
+
+            return 0;
+        }
+
+        size_t right_size() const {
+            if (right_node) {
+                return right_node->tree_size;
+            }
+
+            return 0;
+        }
+
+        void update_values() {
+            tree_size = left_size() + right_size() + 1;
+            total_line_size = ((left_node) ? left_node->total_line_size : 0) +
+                              ((right_node) ? right_node->total_line_size : 0) +
+                              line_size;
+        }
+
+        friend std::ostream &operator<<(std::ostream &os, Node const &node) {
+            if (node.left_node) {
+                os << *node.left_node;
+            }
+
+            os << &node << ": { .line_size= " << node.line_size
+               << "  .left_node= " << node.left_node << " .right_node= "
+               << node.right_node
+               //    << " .parent_node= " << node.parent_node
+               << " .tree_size= " << node.tree_size
+               << " .priority= " << node.priority
+               << " .total_line_size= " << node.total_line_size << "}";
+            os << std::endl;
+
+            if (node.right_node) {
+                os << *node.right_node;
+            }
+            return os;
+        }
+
+        size_t left_total_line_size() const {
+            if (left_node) {
+                return left_node->total_line_size;
+            } else {
+                return 0;
+            }
+        }
+    };
+
+    // for once can we just try not using std::unique_ptr?
+    Node *root_node;
+
+  public:
+    LineSizeTree()
+        : root_node(nullptr) {
+    }
+
+    ~LineSizeTree() {
+        if (root_node) {
+            delete root_node;
+        }
+    }
+
+    void clear() {
+        assert(root_node);
+        delete root_node;
+        root_node = nullptr;
+    }
+
+    void set_position_size(size_t position, size_t new_size) {
+        assert(position <= size());
+
+        if (position < size()) {
+            remove_position(position);
+        }
+        insert_before_position(position, new_size);
+    }
+
+    void insert_before_position(size_t position, size_t line_size) {
+
+        Node *to_insert = new Node(line_size, (size_t)1, (size_t)::rand());
+        // do a regular BST insert
+        root_node = insert_before_position(root_node, position, to_insert);
+    }
+
+    void remove_position(size_t position) {
+        root_node = remove_position(root_node, position);
+    }
+
+    friend std::ostream &operator<<(std::ostream &os, LineSizeTree const &st) {
+        if (st.root_node) {
+            os << "root ptr: " << st.root_node << std::endl;
+            os << *st.root_node << std::endl;
+        } else {
+            os << "nullptr" << std::endl;
+        }
+        return os;
+    }
+
+    size_t size() const {
+        if (!root_node) {
+            return 0;
+        } else {
+            return root_node->tree_size;
+        }
+    }
+
+    size_t byte_offset_at_line(size_t line) const {
+        if (!root_node) {
+            return 0;
+        }
+        assert(line < size());
+        Node *node = get_node_at_position(root_node, line);
+        assert(node);
+        return node->left_total_line_size();
+    }
+
+  private:
+    static Node *get_node_at_position(Node *c_node, size_t position) {
+        assert(c_node);
+        if (c_node->left_size() == position) {
+            return c_node;
+        }
+
+        if (c_node->left_size() > position) {
+            return get_node_at_position(c_node->left_node, position);
+        } else {
+            assert(c_node->left_size() < position);
+            return get_node_at_position(c_node->right_node,
+                                        position - c_node->left_size() - 1);
+        }
+    }
+
+    static Node *bubble_down(Node *c_node) {
+        auto swap_with_left = [](Node *a) -> Node * {
+            assert(a->left_node);
+            Node *left = a->left_node;
+            Node *right = a->right_node;
+
+            a->left_node = left->left_node;
+            a->right_node = left->right_node;
+
+            left->left_node = a;
+            left->right_node = right;
+
+            return left;
+        };
+
+        auto swap_with_right = [](Node *a) -> Node * {
+            assert(a->right_node);
+            Node *left = a->left_node;
+            Node *right = a->right_node;
+
+            a->left_node = right->left_node;
+            a->right_node = right->right_node;
+
+            right->left_node = left;
+            right->right_node = a;
+
+            return right;
+        };
+
+        if (c_node->left_node && c_node->right_node) {
+            // pick the lower prio to rotate into
+            if (c_node->left_node->priority < c_node->right_node->priority) {
+                c_node = swap_with_left(c_node);
+                c_node->left_node = bubble_down(c_node->left_node);
+            } else {
+                c_node = swap_with_right(c_node);
+                c_node->right_node = bubble_down(c_node->right_node);
+            }
+            assert(c_node);
+            c_node->update_values();
+            return c_node;
+        }
+
+        assert(!(c_node->left_node && c_node->right_node));
+
+        // just delete c_node and return the non-null of the two
+        Node *to_return = nullptr;
+        if (c_node->left_node) {
+            to_return = std::exchange(c_node->left_node, nullptr);
+        } else if (c_node->right_node) {
+            assert(c_node->right_node);
+            to_return = std::exchange(c_node->right_node, nullptr);
+        }
+
+        assert(!c_node->left_node && !c_node->right_node);
+        delete c_node;
+        return to_return;
+    }
+
+    static Node *remove_position(Node *c_node, size_t position) {
+        assert(c_node);
+        assert(position < c_node->tree_size);
+        if (c_node->left_size() == position) {
+            // c_node is the node we need to remove;
+            Node *to_return = bubble_down(c_node);
+            if (to_return) {
+                to_return->update_values();
+            }
+            return to_return;
+        }
+
+        if (position < c_node->left_size()) {
+            c_node->left_node = remove_position(c_node->left_node, position);
+            if (c_node->left_node) {
+                c_node->left_node->update_values();
+            }
+        } else {
+            assert(position > c_node->left_size());
+            c_node->right_node = remove_position(
+                c_node->right_node, position - c_node->left_size() - 1);
+            if (c_node->right_node) {
+                c_node->right_node->update_values();
+            }
+        }
+
+        c_node->update_values();
+        return c_node;
+    }
+
+    static Node *insert_before_position(Node *c_node, size_t position,
+                                        Node *to_insert) {
+        if (c_node == nullptr) {
+            assert(position == 0);
+            return to_insert;
+        }
+
+        Node *to_return = c_node;
+        if (position <= c_node->left_size()) {
+
+            c_node->left_node =
+                insert_before_position(c_node->left_node, position, to_insert);
+            if (c_node->left_node->priority > c_node->priority) {
+
+                // right rotate current node;
+                Node *lr_child = c_node->left_node->right_node;
+                Node *l_child = c_node->left_node;
+                c_node->left_node = lr_child;
+                l_child->right_node = c_node;
+                to_return = l_child;
+                c_node->update_values();
+            }
+
+        } else {
+            assert(position > c_node->left_size());
+            c_node->right_node = insert_before_position(
+                c_node->right_node, position - c_node->left_size() - 1,
+                to_insert);
+            if (c_node->right_node->priority > c_node->priority) {
+
+                // left rotate current node;
+                Node *rl_child = c_node->right_node->left_node;
+                Node *r_child = c_node->right_node;
+                c_node->right_node = rl_child;
+                r_child->left_node = c_node;
+                to_return = r_child;
+                c_node->update_values();
+            }
+        }
+        to_return->update_values();
+
+        return to_return;
+    }
+};
+
 struct TextBuffer {
     std::vector<std::string> buffer;
-    std::vector<size_t> starting_byte_offset; // fenwick at some point bois?
+    LineSizeTree starting_byte_offset;
 
   public:
     TextBuffer()
         : buffer({""}),
-          starting_byte_offset({0}) {
-    }
-
-    void recompute_running_starting_byte_offset() {
-        starting_byte_offset.clear();
-        starting_byte_offset.reserve(buffer.size());
-
-        size_t cumulative_sum = 0;
-        for (size_t idx = 0; idx < buffer.size(); ++idx) {
-            starting_byte_offset.push_back(cumulative_sum);
-            cumulative_sum += buffer[idx].size() + 1;
-        }
+          starting_byte_offset() {
+        starting_byte_offset.insert_before_position(0, 0);
     }
 
     size_t get_offset_from_point(Point point) const {
-        return starting_byte_offset.at(point.row) + point.col;
+        return starting_byte_offset.byte_offset_at_line(point.row) + point.col;
     }
 
     void load_contents(std::string_view contents) {
         buffer.clear();
 
+        size_t running_offset = 0;
+        size_t num_lines = 0;
+        starting_byte_offset.clear();
         while (true) {
             size_t newl_pos = contents.find('\n');
+            starting_byte_offset.insert_before_position(num_lines,
+                                                        running_offset);
             buffer.push_back(std::string{contents.substr(0, newl_pos)});
 
             if (newl_pos == std::string::npos) {
                 break;
             }
-            contents = contents.substr(newl_pos + 1);
-        }
 
-        recompute_running_starting_byte_offset();
+            contents = contents.substr(newl_pos + 1);
+            ++num_lines;
+            running_offset += newl_pos + 1;
+        }
     }
 
     void insert_char_at(Point cursor, char c) {
         buffer.at(cursor.row).insert(cursor.col++, 1, c);
-        recompute_running_starting_byte_offset();
+        starting_byte_offset.set_position_size(cursor.row,
+                                               buffer.at(cursor.row).size());
     }
 
     void insert_newline_at(Point cursor) {
@@ -58,32 +361,46 @@ struct TextBuffer {
         buffer.at(cursor.row).resize(cursor.col);
         buffer.insert(buffer.begin() + (long)cursor.row + 1,
                       std::move(next_line));
-
-        recompute_running_starting_byte_offset();
+        starting_byte_offset.set_position_size(cursor.row,
+                                               buffer.at(cursor.row).size());
+        starting_byte_offset.set_position_size(
+            cursor.row + 1, buffer.at(cursor.row + 1).size());
     }
 
     void insert_backspace_at(Point cursor) {
 
         if (cursor.col > 0) {
             buffer.at(cursor.row).erase(--cursor.col, 1);
-            starting_byte_offset.at(cursor.row);
+            starting_byte_offset.set_position_size(
+                cursor.row, buffer.at(cursor.row).size());
         } else if (cursor.row > 0) {
+            assert(cursor.col == 0);
             cursor.col = buffer.at(--cursor.row).length();
             buffer.at(cursor.row).append(buffer.at(cursor.row + 1));
             buffer.erase(buffer.begin() + (long)cursor.row + 1);
+
+            starting_byte_offset.set_position_size(
+                cursor.row, buffer.at(cursor.row).size());
         }
-        recompute_running_starting_byte_offset();
     }
 
     void insert_delete_at(Point cursor) {
         if (cursor.col < buffer.at(cursor.row).size()) {
             buffer.at(cursor.row).erase(cursor.col, 1);
+
+            starting_byte_offset.set_position_size(
+                cursor.row, buffer.at(cursor.row).size());
+
         } else if (cursor.row + 1 < buffer.size()) {
             assert(cursor.col == buffer.at(cursor.row).size());
             buffer.at(cursor.row) += buffer.at(cursor.row + 1);
             buffer.erase(buffer.begin() + (long)cursor.row + 1);
+            starting_byte_offset.set_position_size(
+                cursor.row, buffer.at(cursor.row).size());
+
+            // remove the next line's size too
+            starting_byte_offset.remove_position(cursor.row + 1);
         }
-        recompute_running_starting_byte_offset();
     }
 
     std::vector<std::string_view> get_n_lines_at(size_t starting_row,
@@ -145,12 +462,10 @@ struct TextBuffer {
     Point replace_text_at(Point lp, Point rp, std::vector<std::string> lines) {
         remove_text_at(lp, rp);
         Point to_return = insert_text_at(lp, std::move(lines));
-        recompute_running_starting_byte_offset();
         return to_return;
     }
 
     void remove_text_at(Point lp, Point rp) {
-
         if (lp.row == rp.row) {
             std::string right_half = buffer.at(lp.row).substr(rp.col);
 
@@ -158,19 +473,31 @@ struct TextBuffer {
 
             // not sure the move does anything big here
             buffer.at(lp.row).append(std::move(right_half));
+
+            starting_byte_offset.set_position_size(lp.row,
+                                                   buffer.at(lp.row).size());
             return;
         }
+
+        // hmm TODO: range removal?
 
         buffer.at(lp.row).resize(lp.col);
         buffer.at(rp.row) = buffer.at(rp.row).substr(rp.col);
 
         buffer.erase(buffer.begin() + (ssize_t)lp.row + 1,
                      buffer.begin() + (ssize_t)rp.row);
+        starting_byte_offset.set_position_size(lp.row,
+                                               buffer.at(lp.row).size());
+
+        starting_byte_offset.set_position_size(rp.row,
+                                               buffer.at(lp.row + 1).size());
+        for (size_t r_pos = rp.row - 1; r_pos > lp.row; --r_pos) {
+
+            starting_byte_offset.remove_position(r_pos);
+        }
 
         // then delete one more line?
         insert_delete_at(lp);
-
-        recompute_running_starting_byte_offset();
     }
 
     Point insert_text_at(Point point, std::vector<std::string> lines) {
@@ -182,6 +509,8 @@ struct TextBuffer {
             buffer.at(point.row).resize(point.col);
             buffer.at(point.row).append(lines.front());
             buffer.at(point.row).append(right_half);
+            starting_byte_offset.set_position_size(point.row,
+                                                   buffer.at(point.row).size());
             return {point.row, point.col + lines.front().size()};
         }
 
@@ -197,13 +526,17 @@ struct TextBuffer {
         buffer.insert(buffer.begin() + (ssize_t)point.row + 1,
                       lines.begin() + 1, lines.end());
 
-        recompute_running_starting_byte_offset();
+        for (size_t to_update = point.row;
+             to_update <= final_insertion_point.row; ++to_update) {
+            starting_byte_offset.set_position_size(to_update,
+                                                   buffer.at(to_update).size());
+        }
+
         return final_insertion_point;
     }
 
     void insert_text_at(Point point, char ch) {
         insert_text_at(point, {{ch}});
-        recompute_running_starting_byte_offset();
     }
 
     std::vector<std::string> get_nth_line(size_t idx) const {
