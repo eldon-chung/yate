@@ -510,10 +510,9 @@ class TextPlane {
                           range_start.col);
         apply_style(starting_visual_row, (size_t)starting_x, 1,
                     (unsigned int)x_len, highlight);
-        std::cerr << "last visual_row: " << ending_visual_row << std::endl;
-        std::cerr << "... corresponding col: " << range_end.col << std::endl;
-        apply_style(ending_visual_row, 0, 1, (unsigned int)range_end.col,
-                    highlight);
+        size_t ending_visual_col =
+            range_end.col - row_to_tb_points[ending_visual_row].first.col;
+        apply_style(ending_visual_row, 0, 1, ending_visual_col, highlight);
 
         auto [num_rows, num_cols] = get_plane_yx_dim();
         // colour all rows in between
@@ -548,8 +547,6 @@ class TextPlane {
         Highlighter::Highlight selection_highlight = Highlighter::Highlight{
             Highlighter::Colour{0, 0, 0}, Highlighter::Colour{0xff, 0xff, 0xff},
             NCSTYLE_UNDERLINE};
-        std::cerr << "render selection lp: " << lp << std::endl;
-        std::cerr << "render selection rp: " << rp << std::endl;
         apply_highlight_on_range(row_to_tb_points, lp, rp, selection_highlight);
     }
 
