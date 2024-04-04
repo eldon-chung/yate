@@ -1,12 +1,14 @@
 #pragma once
 
 #include <assert.h>
+#include <cstdio>
 #include <signal.h>
 #include <stddef.h>
 
 #include <notcurses/notcurses.h>
 
 #include <algorithm>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -194,8 +196,8 @@ class PromptPlaneModel {
 
 class TextPlaneModel {
     TextBuffer const *text_buffer_ptr;
-    Point const *cursor_ptr;
-    std::optional<Point> const *anchor_cursor_ptr;
+    Cursor const *cursor_ptr;
+    std::optional<Cursor> const *anchor_cursor_ptr;
     std::optional<Parser<TextBuffer>> const *maybe_parser;
 
   public:
@@ -206,8 +208,8 @@ class TextPlaneModel {
           maybe_parser(nullptr) {
     }
 
-    TextPlaneModel(TextBuffer const *tbp, Point const *cp,
-                   std::optional<Point> const *acp,
+    TextPlaneModel(TextBuffer const *tbp, Cursor const *cp,
+                   std::optional<Cursor> const *acp,
                    std::optional<Parser<TextBuffer>> const *mp)
         : text_buffer_ptr(tbp),
           cursor_ptr(cp),
@@ -224,11 +226,11 @@ class TextPlaneModel {
         return anchor_cursor_ptr->has_value();
     }
 
-    Point get_cursor() const {
+    Cursor get_cursor() const {
         return *cursor_ptr;
     }
 
-    Point get_anchor() const {
+    Cursor get_anchor() const {
         return **anchor_cursor_ptr;
     }
 
@@ -263,6 +265,9 @@ class TextPlane {
     ncplane *cursor_plane_ptr;
     Point tl_corner;
     Point br_corner; // exclusive range that we also maintain
+
+    // buffer to hold temporarily rendered text
+    std::vector<std::pair<Point, Point>> line_points;
 
   public:
     TextPlane() {
@@ -358,13 +363,13 @@ class TextPlane {
 
     void render(WrapStatus wrap_status) {
         // make this vector a fixed array to avoid allocations?
-        auto row_to_tb_points = render_text();
-        render_cursor(row_to_tb_points, wrap_status);
-        render_selection(row_to_tb_points);
+        render_text();
+        render_cursor(wrap_status);
+        render_selection();
         if (model.has_parser()) {
-            render_highlights(row_to_tb_points);
+            render_highlights();
         }
-        render_line_numbers(row_to_tb_points);
+        render_line_numbers();
     }
 
     ssize_t num_visual_lines_from_tl(Point const &p, WrapStatus wrap_status) {
@@ -413,24 +418,23 @@ class TextPlane {
 
   private:
     void apply_highlight_on_range(
-        std::vector<std::pair<Point, Point>> const &row_to_tb_points,
         Point range_start, Point range_end,
         [[maybe_unused]] Highlighter::Highlight highlight) {
 
-        // gives the index into row_to_tb_points
+        // gives the index into line_points
         auto find_visual_row_containing_point = [&](Point p) -> size_t {
             size_t low = 0;
-            size_t high = row_to_tb_points.size();
+            size_t high = line_points.size();
             while (low + 1 < high) {
                 size_t mid = (high - low) / 2 + low;
 
-                if (row_to_tb_points[mid].first <= p &&
-                    p <= row_to_tb_points[mid].second) {
+                if (line_points[mid].first <= p &&
+                    p <= line_points[mid].second) {
                     low = mid;
                     break;
                 }
 
-                if (p < row_to_tb_points[mid].second) {
+                if (p < line_points[mid].second) {
                     high = mid;
                 } else {
                     low = mid;
@@ -480,13 +484,13 @@ class TextPlane {
         };
 
         // need to assert that the range intersects the screen
-        assert(range_end >= row_to_tb_points.front().first &&
-               range_start < row_to_tb_points.back().second);
+        assert(range_end >= line_points.front().first &&
+               range_start < line_points.back().second);
 
         // clamp the points if you must
-        range_start = std::max(range_start, row_to_tb_points.front().first);
-        range_end = std::min(
-            range_end, row_to_tb_points.back().second); // this is exclusive
+        range_start = std::max(range_start, line_points.front().first);
+        range_end =
+            std::min(range_end, line_points.back().second); // this is exclusive
 
         size_t starting_visual_row =
             find_visual_row_containing_point(range_start);
@@ -495,7 +499,7 @@ class TextPlane {
         if (starting_visual_row == ending_visual_row) {
             int starting_x =
                 (int)(range_start.col -
-                      row_to_tb_points.at(starting_visual_row).first.col);
+                      line_points.at(starting_visual_row).first.col);
             int x_len = (int)(range_end.col - range_start.col);
             apply_style(starting_visual_row, (size_t)starting_x, 1,
                         (unsigned int)x_len, highlight);
@@ -503,15 +507,16 @@ class TextPlane {
         }
 
         // colour the first and last row
-        int starting_x =
-            (int)(range_start.col -
-                  row_to_tb_points.at(starting_visual_row).first.col);
-        int x_len = (int)(row_to_tb_points.at(starting_visual_row).second.col -
-                          range_start.col);
+        int starting_x = (int)(range_start.col -
+                               line_points.at(starting_visual_row).first.col);
+        int x_len = (int)(line_points.at(starting_visual_row).second.col -
+                          (size_t)starting_x);
+
         apply_style(starting_visual_row, (size_t)starting_x, 1,
                     (unsigned int)x_len, highlight);
+
         size_t ending_visual_col =
-            range_end.col - row_to_tb_points[ending_visual_row].first.col;
+            range_end.col - line_points[ending_visual_row].first.col;
         apply_style(ending_visual_row, 0, 1, ending_visual_col, highlight);
 
         auto [num_rows, num_cols] = get_plane_yx_dim();
@@ -522,24 +527,21 @@ class TextPlane {
         }
     }
 
-    void render_highlights(
-        std::vector<std::pair<Point, Point>> const &row_to_tb_points) {
+    void render_highlights() {
         // get highlight list from the model
         std::vector<Capture> captures = model.get_captures_within(
-            row_to_tb_points.front().first, row_to_tb_points.back().second);
+            line_points.front().first, line_points.back().second);
 
         // TODO: I just want to verify that no point is going to be highlighted
         // twice
 
         for (auto capture : captures) {
-            apply_highlight_on_range(row_to_tb_points, capture.start,
-                                     capture.end,
+            apply_highlight_on_range(capture.start, capture.end,
                                      highlighter[capture.capture_name]);
         }
     }
 
-    void render_selection(
-        std::vector<std::pair<Point, Point>> const &row_to_tb_points) {
+    void render_selection() {
         if (!model.has_anchor()) {
             return;
         }
@@ -547,11 +549,10 @@ class TextPlane {
         Highlighter::Highlight selection_highlight = Highlighter::Highlight{
             Highlighter::Colour{0, 0, 0}, Highlighter::Colour{0xff, 0xff, 0xff},
             NCSTYLE_UNDERLINE};
-        apply_highlight_on_range(row_to_tb_points, lp, rp, selection_highlight);
+        apply_highlight_on_range(lp, rp, selection_highlight);
     }
 
-    void
-    render_line_numbers(std::vector<std::pair<Point, Point>> const &row_idxs) {
+    void render_line_numbers() {
         // TODO: on the first number, indicate if there's more to that line
         // being wrapped from the previous visual row
 
@@ -559,10 +560,10 @@ class TextPlane {
         size_t curr_logical_row = std::string::npos;
 
         char out_str[5];
-        for (size_t visual_row_idx = 0; visual_row_idx < row_idxs.size();
+        for (size_t visual_row_idx = 0; visual_row_idx < line_points.size();
              ++visual_row_idx) {
-            if (curr_logical_row != row_idxs.at(visual_row_idx).first.row) {
-                curr_logical_row = row_idxs.at(visual_row_idx).first.row;
+            if (curr_logical_row != line_points.at(visual_row_idx).first.row) {
+                curr_logical_row = line_points.at(visual_row_idx).first.row;
                 snprintf(out_str, 5, "%zu", curr_logical_row + 1);
                 ncplane_putnstr_yx(line_number_plane_ptr, (int)(visual_row_idx),
                                    0, 3, out_str);
@@ -570,143 +571,130 @@ class TextPlane {
         }
     }
 
-    void
-    render_cursor(std::vector<std::pair<Point, Point>> const &row_to_tb_points,
-                  WrapStatus wrap_status) {
-
-        // returns: -1 if p is to the left, 0 if within, and 1 if p is to the
-        // right
-        auto compare_points = [](Point p,
-                                 std::pair<Point, Point> range) -> int {
-            if (p < range.first) {
-                return -1;
-            } else if (p >= range.second) {
-                return 1;
-            } else {
-                assert(p >= range.first && p < range.second);
-                return 0;
-            }
-        };
-
-        // for a cursor we need to find the highest index for which
-        // point is >= of the range in that index
-        auto find_row_given_tb_point = [&](Point p) -> size_t {
-            size_t high = row_to_tb_points.size(); // exclusive
-            size_t low = 0;
-            size_t mid = (high - low) / 2 + low;
-
-            while (low + 1 < high) {
-                mid = (high - low) / 2 + low;
-                int cmp_res = compare_points(p, row_to_tb_points.at(mid));
-                if (cmp_res == 0) {
-                    return mid;
-                }
-
-                if (cmp_res == 1) {
-                    // we need to keep this point
-                    low = mid;
-                } else {
-                    assert(cmp_res == -1);
-                    // don't keep this point
-                    high = mid; // note: high is exclusive
-                }
-            }
-            return low;
-        };
+    void render_cursor([[gnu::unused]] WrapStatus wrap_status) {
 
         // if our text plane right now doesn't contain the cursor
         // we just hide the cursor and return;
-        if (model.get_cursor() > row_to_tb_points.back().second) {
+        if (model.get_cursor() > line_points.back().second ||
+            model.get_cursor() < line_points.front().first) {
             ncplane_move_below(cursor_plane_ptr, plane_ptr);
             return;
         }
 
-        // else we now try to find the point
-        size_t visual_row_idx = find_row_given_tb_point(model.get_cursor());
+        auto [row_count, col_count] = get_plane_yx_dim();
+        // need to find where to put the cursor
+        Cursor logical_cursor = model.get_cursor();
+        std::string_view curr_line = model.at(logical_cursor.row);
 
-        // turn cursor on
-        ncplane_move_above(cursor_plane_ptr, plane_ptr);
-
-        auto [num_rows, num_cols] = get_plane_yx_dim();
-
-        if (wrap_status == WrapStatus::WRAP) {
-            // special case: need to deal with the case the cursor is at the end
-            // of line at the screen
-            if ((model.get_cursor().col -
-                 row_to_tb_points.at(visual_row_idx).first.col) == num_cols) {
-                ncplane_move_yx(cursor_plane_ptr, (int)visual_row_idx + 1, 0);
-            } else {
-                ncplane_move_yx(
-                    cursor_plane_ptr, (int)visual_row_idx,
-                    (int)(model.get_cursor().col -
-                          row_to_tb_points.at(visual_row_idx).first.col));
+        size_t vis_row = line_points.size() - 1;
+        for (size_t idx = 0; idx < line_points.size(); ++idx) {
+            if (line_points[idx].first <= logical_cursor &&
+                logical_cursor <= line_points[idx].second) {
+                vis_row = idx;
+                break;
             }
-        } else {
-            // TODO: nowrap case
+
+            if (logical_cursor < line_points[idx].first) {
+                assert(idx > 1);
+                vis_row = idx - 1;
+                break;
+            }
         }
+
+        // now translate this into a vis_col
+        size_t vis_col = 0;
+
+        curr_line = curr_line.substr(line_points[vis_row].first.col,
+                                     logical_cursor.col -
+                                         line_points[vis_row].first.col);
+        for (char c : curr_line) {
+            vis_col += StringUtils::symbol_into_width(c);
+        }
+
+        if (vis_col == col_count) {
+            ncplane_move_yx(cursor_plane_ptr, (int)vis_row + 1, 0);
+        } else {
+            ncplane_move_yx(cursor_plane_ptr, (int)vis_row, (int)vis_col);
+        }
+
+        // else todo the nowrap case
     }
 
     std::vector<std::pair<Point, Point>> render_text() {
         ncplane_erase(plane_ptr);
         // get the text_plane size
-        auto [row_count, col_count] = get_plane_yx_dim();
+        auto dims = get_plane_yx_dim();
+        size_t row_count = dims.first, col_count = dims.second;
 
-        std::vector<std::pair<Point, Point>> to_return;
-        to_return.reserve(row_count);
+        line_points.clear();
+        line_points.reserve(row_count);
 
         size_t num_lines_output = 0;
 
         size_t curr_logical_row = tl_corner.row;
         size_t curr_logical_col = tl_corner.col;
 
-        Point line_start = tl_corner;
+        char vis_line_buf[col_count + 1];
+        // rendered_string_buf.clear();
+        std::string_view curr_logical_line;
+
+        auto into_vis_line_buf = [&, col_count]() {
+            Point line_start_point = {curr_logical_row, curr_logical_col};
+
+            size_t buf_idx = 0;
+            if (curr_logical_col == 0) {
+                curr_logical_line = model.at(curr_logical_row);
+            }
+            while (buf_idx < col_count &&
+                   curr_logical_col < curr_logical_line.size()) {
+                if (curr_logical_line[curr_logical_col] != '\t') {
+                    vis_line_buf[buf_idx++] =
+                        curr_logical_line[curr_logical_col++];
+                    // rendered_string_buf.back().push_back(
+                    // curr_logical_line[curr_logical_col++]);
+                    continue;
+                }
+
+                if (buf_idx + 4 <= col_count) {
+                    for (size_t i = 0; i < 4; ++i) {
+                        // rendered_string_buf.back().push_back(' ');
+                        vis_line_buf[buf_idx++] = ' ';
+                    }
+                    ++curr_logical_col;
+                } else {
+                    break;
+                }
+            }
+
+            Point line_end_point = {curr_logical_row, curr_logical_col};
+            line_points.push_back({line_start_point, line_end_point});
+
+            if (curr_logical_col == curr_logical_line.size()) {
+                ++curr_logical_row;
+                curr_logical_col = 0;
+            }
+            vis_line_buf[buf_idx] = '\0';
+            return buf_idx;
+        };
+
         while (num_lines_output < row_count &&
                curr_logical_row < model.num_lines()) {
+            size_t num_vis_chars = into_vis_line_buf();
 
-            std::string_view curr_line = model.at(curr_logical_row);
-            assert(tl_corner.col <= curr_line.size());
-
-            int num_written = ncplane_putnstr_yx(
-                plane_ptr, (int)num_lines_output, 0, col_count,
-                curr_line.data() + curr_logical_col);
-
-            Point line_end = line_start;
-            line_end.col += (size_t)num_written;
-            to_return.push_back({line_start, line_end});
-
-            if (num_written < 0) {
-                // handle error cases?
-                exit(1);
-            }
-
-            ++num_lines_output;
-            br_corner.row = curr_logical_row;
-            br_corner.col = curr_logical_col + col_count;
-
-            // is there some row shenanigan we need to do
-
-            if (curr_logical_col + col_count < curr_line.size()) {
-                curr_logical_col += col_count;
-            } else {
-                curr_logical_col = 0;
-                ++curr_logical_row;
-            }
-            line_start = Point{curr_logical_row, curr_logical_col};
+            ncplane_putnstr_yx(plane_ptr, (int)num_lines_output++, 0,
+                               num_vis_chars, vis_line_buf);
+            // ncplane_putnstr_yx(plane_ptr, (int)num_lines_output++, 0,
+            //                    rendered_string_buf.back().size(),
+            //                    rendered_string_buf.back().c_str());
         }
 
-        if (to_return.empty()) {
-            to_return.push_back({{0, 0}, {0, 0}});
+        if (num_lines_output == row_count) {
+            br_corner = line_points.back().second;
+        } else {
+            br_corner = Point(std::string::npos, std::string::npos);
         }
 
-        // set br_corner only when screen is filled
-        if (num_lines_output < row_count) {
-            // by definition the br corner of the screen
-            // is now not reachable by the document
-            br_corner.row = std::string::npos;
-            br_corner.col = std::string::npos;
-        }
-
-        return to_return;
+        return line_points;
     }
 
     std::pair<unsigned int, unsigned int> get_yx_dim(ncplane *ptr) const {
@@ -1084,5 +1072,9 @@ class View {
     void focus_text() {
         cmd_plane.hide_cursor();
         text_plane_list.at(active_text_plane_idx).show_cursor();
+    }
+
+    std::vector<std::pair<Point, Point>> const &get_active_line_points() {
+        return text_plane_list.at(active_text_plane_idx).line_points;
     }
 };

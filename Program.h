@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <signal.h>
 
 #include <assert.h>
@@ -11,6 +12,7 @@
 #include <optional>
 #include <queue>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <notcurses/notcurses.h>
@@ -502,7 +504,7 @@ class FileOpenerState : public ProgramState {
 
     File *file_ptr;
     TextBuffer *text_buffer_ptr;
-    Point *text_buffer_cursor_ptr;
+    Cursor *text_buffer_cursor_ptr;
     std::optional<std::string> maybe_filename_to_open;
 
     enum class SubState {
@@ -518,7 +520,7 @@ class FileOpenerState : public ProgramState {
     SubState substate;
 
   public:
-    FileOpenerState(File *fp, TextBuffer *tbp, Point *tbcp)
+    FileOpenerState(File *fp, TextBuffer *tbp, Cursor *tbcp)
         : ProgramState(),
           file_ptr(fp),
           text_buffer_ptr(tbp),
@@ -592,7 +594,7 @@ class FileOpenerState : public ProgramState {
             } else {
                 text_buffer_ptr->load_contents(maybe_file_contents.value());
                 // for now we just reset this at {0, 0}
-                *text_buffer_cursor_ptr = Point{0, 0};
+                *text_buffer_cursor_ptr = Cursor();
             }
             return StateReturn(StateReturn::Transition::EXIT);
         }
@@ -626,8 +628,8 @@ class FileOpenerState : public ProgramState {
 class TextState : public ProgramState {
     File file;
     TextBuffer text_buffer;
-    Point text_cursor;
-    std::optional<Point> maybe_anchor_point;
+    Cursor text_cursor;
+    std::optional<Cursor> maybe_anchor_point;
     std::vector<std::string> clipboard;
     size_t plane_fd;
 
@@ -700,11 +702,11 @@ class TextState : public ProgramState {
             ((nc_input.id >= 32 && nc_input.id <= 255) ||
              nc_input.id == NCKEY_TAB)) {
 
-            Point update_start_point = text_cursor;
+            Cursor update_start_point = text_cursor;
             size_t start_byte =
                 text_buffer.get_offset_from_point(update_start_point);
 
-            Point update_old_end_point = text_cursor;
+            Cursor update_old_end_point = text_cursor;
             size_t old_end_byte =
                 text_buffer.get_offset_from_point(update_old_end_point);
 
@@ -726,10 +728,11 @@ class TextState : public ProgramState {
             text_buffer.insert_char_at(text_cursor, (char)nc_input.id);
             RIGHT_ARROW_HANDLER();
 
-            Point update_new_end_point = text_cursor;
+            Cursor update_new_end_point = text_cursor;
             size_t new_end_byte =
                 text_buffer.get_offset_from_point(update_new_end_point);
 
+            // TODO: only do this if it's valid
             reparse_text(update_start_point, update_old_end_point,
                          update_new_end_point, start_byte, old_end_byte,
                          new_end_byte);
@@ -745,15 +748,15 @@ class TextState : public ProgramState {
             if (maybe_anchor_point) {
                 auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
 
-                Point update_start_point = lp;
-                Point update_old_end_point = rp;
+                Cursor update_start_point = lp;
+                Cursor update_old_end_point = rp;
                 size_t start_byte = text_buffer.get_offset_from_point(lp);
                 size_t old_end_byte = text_buffer.get_offset_from_point(rp);
 
                 text_buffer.remove_text_at(lp, rp);
                 text_cursor = lp;
 
-                Point update_new_end_point = text_cursor;
+                Cursor update_new_end_point = text_cursor;
                 size_t new_end_byte =
                     text_buffer.get_offset_from_point(update_new_end_point);
 
@@ -763,15 +766,15 @@ class TextState : public ProgramState {
                              update_new_end_point, start_byte, old_end_byte,
                              new_end_byte);
             } else {
-                Point old_pos = text_cursor;
+                Cursor old_pos = text_cursor;
 
-                Point update_old_end_point = text_cursor;
+                Cursor update_old_end_point = text_cursor;
                 size_t old_end_byte =
                     text_buffer.get_offset_from_point(update_old_end_point);
 
                 LEFT_ARROW_HANDLER();
-                Point update_start_point = text_cursor;
-                Point update_new_end_point = text_cursor;
+                Cursor update_start_point = text_cursor;
+                Cursor update_new_end_point = text_cursor;
 
                 size_t start_byte =
                     text_buffer.get_offset_from_point(update_start_point);
@@ -790,15 +793,15 @@ class TextState : public ProgramState {
 
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_ENTER) {
 
-            Point update_start_point = text_cursor;
-            Point update_old_end_point = text_cursor;
+            Cursor update_start_point = text_cursor;
+            Cursor update_old_end_point = text_cursor;
 
             size_t start_byte =
                 text_buffer.get_offset_from_point(update_start_point);
             size_t old_end_byte =
                 text_buffer.get_offset_from_point(update_old_end_point);
 
-            Point update_new_end_point;
+            Cursor update_new_end_point;
             size_t new_end_byte;
 
             if (maybe_anchor_point) {
@@ -834,8 +837,8 @@ class TextState : public ProgramState {
             if (maybe_anchor_point) {
                 auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
 
-                Point update_start_point = lp;
-                Point update_old_end_point = rp;
+                Cursor update_start_point = lp;
+                Cursor update_old_end_point = rp;
 
                 size_t start_byte =
                     text_buffer.get_offset_from_point(update_start_point);
@@ -846,7 +849,7 @@ class TextState : public ProgramState {
                 text_cursor = lp;
                 maybe_anchor_point.reset();
 
-                Point update_new_end_point = lp;
+                Cursor update_new_end_point = lp;
                 size_t new_end_byte =
                     text_buffer.get_offset_from_point(update_new_end_point);
 
@@ -854,9 +857,9 @@ class TextState : public ProgramState {
                              update_new_end_point, start_byte, old_end_byte,
                              new_end_byte);
             } else {
-                Point update_start_point = text_cursor;
-                Point update_old_end_point =
-                    move_point_right(update_start_point);
+                Cursor update_start_point = text_cursor;
+                Cursor update_old_end_point =
+                    move_cursor_right(update_start_point);
 
                 size_t start_byte =
                     text_buffer.get_offset_from_point(update_start_point);
@@ -912,7 +915,7 @@ class TextState : public ProgramState {
             text_cursor = std::min(text_cursor, *maybe_anchor_point);
             maybe_anchor_point.reset();
         } else {
-            text_cursor = move_point_left(text_cursor);
+            text_cursor = move_cursor_left(text_cursor);
         }
         view_ptr->chase_point(text_cursor);
         return StateReturn();
@@ -922,7 +925,7 @@ class TextState : public ProgramState {
             text_cursor = std::max(text_cursor, *maybe_anchor_point);
             maybe_anchor_point.reset();
         } else {
-            text_cursor = move_point_right(text_cursor);
+            text_cursor = move_cursor_right(text_cursor);
         }
         view_ptr->chase_point(text_cursor);
         return StateReturn();
@@ -932,7 +935,7 @@ class TextState : public ProgramState {
             text_cursor = std::min(text_cursor, *maybe_anchor_point);
             maybe_anchor_point.reset();
         }
-        text_cursor = move_point_up(text_cursor);
+        text_cursor = move_cursor_up(text_cursor);
         view_ptr->chase_point(text_cursor);
         return StateReturn();
     }
@@ -941,7 +944,7 @@ class TextState : public ProgramState {
             text_cursor = std::max(text_cursor, *maybe_anchor_point);
             maybe_anchor_point.reset();
         }
-        text_cursor = move_point_down(text_cursor);
+        text_cursor = move_cursor_down(text_cursor);
         view_ptr->chase_point(text_cursor);
         return StateReturn();
     }
@@ -951,7 +954,7 @@ class TextState : public ProgramState {
             maybe_anchor_point = text_cursor;
         }
 
-        text_cursor = move_point_left(text_cursor);
+        text_cursor = move_cursor_left(text_cursor);
         view_ptr->chase_point(text_cursor);
 
         assert(maybe_anchor_point);
@@ -965,7 +968,7 @@ class TextState : public ProgramState {
             maybe_anchor_point = text_cursor;
         }
 
-        text_cursor = move_point_right(text_cursor);
+        text_cursor = move_cursor_right(text_cursor);
         view_ptr->chase_point(text_cursor);
 
         assert(maybe_anchor_point);
@@ -979,7 +982,7 @@ class TextState : public ProgramState {
             maybe_anchor_point = text_cursor;
         }
 
-        text_cursor = move_point_up(text_cursor);
+        text_cursor = move_cursor_up(text_cursor);
         view_ptr->chase_point(text_cursor);
 
         assert(maybe_anchor_point);
@@ -993,7 +996,7 @@ class TextState : public ProgramState {
             maybe_anchor_point = text_cursor;
         }
 
-        text_cursor = move_point_down(text_cursor);
+        text_cursor = move_cursor_down(text_cursor);
         view_ptr->chase_point(text_cursor);
 
         assert(maybe_anchor_point);
@@ -1092,92 +1095,114 @@ class TextState : public ProgramState {
     // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Other stuff
 
     // =============== Helper Methods
-    Point move_point_right(Point const &p) const {
-        Point to_return = p;
+    Cursor move_cursor_right(Cursor const &p) const {
+        Cursor to_return = p;
         if (to_return.col == text_buffer.at(to_return.row).size() &&
             to_return.row + 1 < text_buffer.num_lines()) {
             // move down one line
             to_return.col = 0;
+            to_return.effective_col = 0;
             ++to_return.row;
         } else if (to_return.col < text_buffer.at(to_return.row).size()) {
+            to_return.effective_col +=
+                StringUtils::symbol_into_width(text_buffer[to_return]);
             ++to_return.col;
         }
         return to_return;
     }
 
-    Point move_point_up(Point const &p) const {
-        Point to_return = p;
-        if (view_ptr->get_wrap_status() == WrapStatus::WRAP) {
-            auto [num_rows, num_cols] = view_ptr->get_text_plane_dim(plane_fd);
-            if (to_return.col >= num_cols) {
-                to_return.col -= num_cols;
-            } else if (to_return.row > 0) {
-                --to_return.row;
-                size_t line_size = text_buffer.at(to_return.row).size();
-                size_t last_chunk_col = line_size / num_cols * line_size;
-                assert(to_return.col < num_cols);
-                to_return.col =
-                    std::min(to_return.col + last_chunk_col, line_size);
-            } else if (to_return.row == 0) {
-                to_return.col = 0;
-            }
-        } else {
+    Cursor move_cursor_up(Cursor const &p) const {
+        Cursor to_return = p;
+        if (view_ptr->get_wrap_status() == WrapStatus::NOWRAP) {
             // non-wrapping movement
             to_return.col =
                 std::min(to_return.col, text_buffer.at(--to_return.row).size());
+            return to_return;
+        }
+
+        auto [num_rows, num_cols] = view_ptr->get_text_plane_dim(plane_fd);
+        // first is col, second is effective width
+
+        // returns the point moved up on the line
+        // unless it cannot do that
+        std::optional<Cursor> maybe_up_point = StringUtils::maybe_up_point(
+            text_buffer.at(to_return.row), to_return, num_cols);
+
+        if (maybe_up_point) {
+            return maybe_up_point.value();
+        }
+        // then it was already on its first chunk.
+        if (to_return.row == 0) {
+            to_return.col = 0;
+            to_return.effective_col = 0;
+        } else {
+            return StringUtils::final_chunk(text_buffer.at(--to_return.row),
+                                            to_return, num_cols);
         }
 
         return to_return;
     }
 
-    Point move_point_down(Point const &p) const {
-        Point to_return = p;
-        if (view_ptr->get_wrap_status() == WrapStatus::WRAP) {
-            auto [num_rows, num_cols] = view_ptr->get_text_plane_dim(plane_fd);
-            size_t curr_line_size = text_buffer.at(to_return.row).size();
+    Cursor move_cursor_down(Cursor const &p) const {
+        Cursor to_return = p;
 
-            if (curr_line_size == 0) {
-                to_return.col = 0;
-                to_return.row =
-                    std::min(text_buffer.num_lines() - 1, to_return.row + 1);
-            } else if ((to_return.col / curr_line_size * curr_line_size) +
-                           num_cols <=
-                       curr_line_size) {
-                to_return.col =
-                    std::min(to_return.col + num_cols, curr_line_size);
-            } else if (to_return.row + 1 == text_buffer.num_lines()) {
-                to_return.col = text_buffer.at(to_return.row).size();
-            } else if (to_return.row + 1 < text_buffer.num_lines()) {
-                ++to_return.row;
-                to_return.col = std::min(to_return.col,
-                                         text_buffer.at(to_return.row).size());
-            }
-        } else {
+        if (view_ptr->get_wrap_status() == WrapStatus::NOWRAP) {
             // non-wrapping movement
             if (to_return.row + 1 < text_buffer.num_lines()) {
                 ++to_return.row;
                 to_return.col = std::min(to_return.col,
                                          text_buffer.at(to_return.row).size());
             }
+            return to_return;
+        }
+
+        auto [num_rows, num_cols] = view_ptr->get_text_plane_dim(plane_fd);
+
+        std::optional<Cursor> maybe_down_point = StringUtils::maybe_down_point(
+            text_buffer.at(to_return.row), to_return, num_cols);
+
+        if (maybe_down_point) {
+            return maybe_down_point.value();
+        }
+
+        // then it was already on its last chunk.
+        if (to_return.row == text_buffer.num_lines() - 1) {
+
+            to_return.col = text_buffer.at(to_return.row).size();
+            to_return.effective_col =
+                StringUtils::var_width_str_into_effective_width(
+                    text_buffer.at(to_return.row));
+
+            return to_return;
+        } else {
+            return StringUtils::first_chunk(text_buffer.at(++to_return.row),
+                                            to_return, num_cols);
         }
 
         return to_return;
     }
 
-    Point move_point_left(Point const &p) const {
-        Point to_return = p;
+    Cursor move_cursor_left(Cursor const &p) const {
+        Cursor to_return = p;
         // update logical cursor
         if (to_return.col > 0) {
+
             --to_return.col;
+            to_return.effective_col -= StringUtils::symbol_into_width(
+                text_buffer.at(to_return.row)[to_return.col]);
         } else if (to_return.row > 0) {
             to_return.col = text_buffer.at(--to_return.row).size();
+            to_return.effective_col =
+                StringUtils::var_width_str_into_effective_width(
+                    text_buffer.at(to_return.row));
         }
+
         return to_return;
     }
 
     // call this to update the parser
-    void reparse_text(Point start_point, Point old_end_point,
-                      Point new_end_point, size_t start_byte,
+    void reparse_text(Cursor start_point, Cursor old_end_point,
+                      Cursor new_end_point, size_t start_byte,
                       size_t old_end_byte, size_t new_end_byte) {
         // quit if there is no parser
         if (!maybe_parser) {

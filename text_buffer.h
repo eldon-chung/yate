@@ -1,14 +1,231 @@
 #pragma once
 
 #include <assert.h>
+#include <cstddef>
+#include <optional>
 #include <stdlib.h>
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "util.h"
+
+// basically a string but with some useful metadata
+struct TaggedString {
+    std::string str;
+    size_t width;
+
+    operator std::string_view() const {
+        return str;
+    }
+
+    TaggedString(std::string s)
+        : str(std::move(s)) {
+    }
+};
+
+namespace StringUtils {
+inline size_t symbol_into_width(char c) {
+    if (c == '\t') {
+        return 4;
+    } else {
+        return 1;
+    }
+}
+
+inline size_t var_width_str_into_effective_width(std::string_view sv) {
+    size_t width = 0;
+    for (char c : sv) {
+        width += symbol_into_width(c);
+    }
+
+    return width;
+}
+
+inline std::optional<Cursor> maybe_down_point(std::string_view sv,
+                                              Cursor cursor, size_t width) {
+    std::cerr << " maybe_down_point " << std::endl;
+
+    assert(cursor.col <= sv.size());
+
+    size_t curr_start_col = 0;
+    size_t curr_start_effective_col = 0;
+    size_t curr_chunk_width = 0;
+    size_t cumulative_width = 0;
+
+    size_t col = 0;
+    while (col < cursor.col) {
+
+        if (curr_chunk_width + StringUtils::symbol_into_width(sv[col]) <=
+            width) {
+            cumulative_width += StringUtils::symbol_into_width(sv[col]);
+            curr_chunk_width += StringUtils::symbol_into_width(sv[col++]);
+            continue;
+        }
+
+        curr_start_col = col;
+        curr_start_effective_col = cumulative_width;
+        curr_chunk_width = 0;
+    }
+
+    // now we need to first hit the chunk end.
+    std::optional<size_t> next_start_col;
+    std::optional<size_t> next_start_effective_col;
+    while (col < sv.size()) {
+
+        if (curr_chunk_width + StringUtils::symbol_into_width(sv[col]) <=
+            width) {
+            cumulative_width += StringUtils::symbol_into_width(sv[col]);
+            curr_chunk_width += StringUtils::symbol_into_width(sv[col++]);
+        } else {
+            // now that we've hit the good case.
+            next_start_effective_col = cumulative_width;
+            next_start_col = col;
+            break;
+        }
+    }
+
+    if (!next_start_col) {
+        return {};
+    }
+    std::cerr << " we can find next chunk " << std::endl;
+    // now same trick as before:
+    // then try to retarget this width if possible.
+    assert(next_start_col);
+    assert(next_start_effective_col);
+
+    size_t width_from_curr = cursor.effective_col - curr_start_effective_col;
+    size_t line_col = *next_start_col;
+    size_t curr_width = 0;
+    while (line_col < sv.size() &&
+           curr_width + StringUtils::symbol_into_width(sv[line_col]) <=
+               width_from_curr) {
+        curr_width += StringUtils::symbol_into_width(sv[line_col++]);
+    }
+
+    return Cursor{cursor.row, line_col, curr_width + *next_start_effective_col};
+}
+
+inline std::optional<Cursor> maybe_up_point(std::string_view sv, Cursor cursor,
+                                            size_t width) {
+    assert(cursor.col <= sv.size());
+
+    size_t prev_start_col = 0;
+    size_t prev_start_effective_col = 0;
+
+    size_t curr_start_col = 0;
+    size_t curr_start_effective_col = 0;
+    size_t curr_chunk_width = 0;
+
+    size_t chunk_idx = 0;
+
+    size_t col = 0;
+    while (col < cursor.col) {
+        if (curr_chunk_width + StringUtils::symbol_into_width(sv[col]) <=
+            width) {
+            curr_chunk_width += StringUtils::symbol_into_width(sv[col++]);
+            continue;
+        }
+
+        prev_start_col = curr_start_col;
+        prev_start_effective_col = curr_start_effective_col;
+
+        curr_start_col = col;
+        curr_start_effective_col = curr_chunk_width + prev_start_effective_col;
+        curr_chunk_width = 0;
+        ++chunk_idx;
+    }
+
+    if (chunk_idx == 0) {
+        return {};
+    }
+
+    // then try to retarget this width if possible.
+    size_t width_from_curr = cursor.effective_col - curr_start_effective_col;
+    size_t line_col = prev_start_col;
+    size_t curr_width = 0;
+    while (line_col < curr_start_col &&
+           curr_width + StringUtils::symbol_into_width(sv[line_col]) <=
+               width_from_curr) {
+        curr_width += StringUtils::symbol_into_width(sv[line_col++]);
+    }
+
+    return Cursor{cursor.row, line_col, curr_width + prev_start_effective_col};
+}
+
+// returns the indices into the string that start at chunks divided by width
+// in a left justified manner
+inline std::vector<std::pair<size_t, size_t>>
+columns_of_chunked_text(std::string_view sv, size_t width) {
+    assert(width > 0); // eventually set this to tab_stop or something
+    std::vector<std::pair<size_t, size_t>> starting_indices = {{0, 0}};
+    size_t sv_idx = 0;
+    size_t cumulative_width = 0;
+    size_t curr_chunk_width = 0;
+
+    while (sv_idx < sv.size()) {
+        if (curr_chunk_width + symbol_into_width(sv[sv_idx]) <= width) {
+            curr_chunk_width += symbol_into_width(sv[sv_idx]);
+            cumulative_width += symbol_into_width(sv[sv_idx]);
+            ++sv_idx;
+        } else {
+            starting_indices.push_back({sv_idx, cumulative_width});
+            curr_chunk_width = 0;
+        }
+    }
+
+    return starting_indices;
+}
+
+inline Cursor first_chunk(std::string_view sv, Cursor cursor, size_t width) {
+    size_t col = 0, effective_width = 0;
+    while (col < sv.size() && effective_width <= cursor.effective_col) {
+        if (effective_width + StringUtils::symbol_into_width(sv[col]) >
+            cursor.effective_col) {
+            break;
+        }
+
+        effective_width += StringUtils::symbol_into_width(sv[col++]);
+    }
+    return Cursor{cursor.row, col, effective_width};
+}
+
+inline Cursor final_chunk(std::string_view sv, Cursor cursor, size_t width) {
+    auto points = StringUtils::columns_of_chunked_text(sv, width);
+    assert(!points.empty());
+
+    if (points.size() == 1) {
+        // then it's just the final point.
+        assert(points.front().first == 0 && points.front().second == 0);
+        size_t col = 0, effective_width = 0;
+        while (col < sv.size() && effective_width <= cursor.effective_col) {
+            if (effective_width + StringUtils::symbol_into_width(sv[col]) >
+                cursor.effective_col) {
+                break;
+            }
+            effective_width += StringUtils::symbol_into_width(sv[col++]);
+        }
+        return Cursor{cursor.row, col, effective_width};
+    }
+
+    size_t second_last_idx = points.size() - 2;
+    size_t effective_offset = cursor.effective_col - points.back().second;
+    size_t curr_width = 0;
+    size_t curr_col = points[second_last_idx].first;
+    while (curr_col < cursor.col) {
+        if (curr_width + StringUtils::symbol_into_width(sv[curr_col]) >
+            effective_offset) {
+            break;
+        }
+        curr_width += StringUtils::symbol_into_width(sv[curr_col++]);
+    }
+    return Cursor{cursor.row, curr_col, curr_width + cursor.effective_col};
+}
+
+} // namespace StringUtils
 
 // an ordered stats tree to help maintain starting_byte_offsets;
 // the implementation underneath is a treap
@@ -324,7 +541,7 @@ struct TextBuffer {
         starting_byte_offset.insert_before_position(0, 0);
     }
 
-    size_t get_offset_from_point(Point point) const {
+    size_t get_offset_from_point(Cursor point) const {
         return starting_byte_offset.byte_offset_at_line(point.row) + point.col;
     }
 
@@ -350,13 +567,13 @@ struct TextBuffer {
         }
     }
 
-    void insert_char_at(Point cursor, char c) {
+    void insert_char_at(Cursor cursor, char c) {
         buffer.at(cursor.row).insert(cursor.col++, 1, c);
         starting_byte_offset.set_position_size(cursor.row,
                                                buffer.at(cursor.row).size());
     }
 
-    void insert_newline_at(Point cursor) {
+    void insert_newline_at(Cursor cursor) {
         std::string next_line = buffer.at(cursor.row).substr(cursor.col);
         buffer.at(cursor.row).resize(cursor.col);
         buffer.insert(buffer.begin() + (long)cursor.row + 1,
@@ -367,7 +584,7 @@ struct TextBuffer {
             cursor.row + 1, buffer.at(cursor.row + 1).size());
     }
 
-    void insert_backspace_at(Point cursor) {
+    void insert_backspace_at(Cursor cursor) {
 
         if (cursor.col > 0) {
             buffer.at(cursor.row).erase(--cursor.col, 1);
@@ -384,7 +601,7 @@ struct TextBuffer {
         }
     }
 
-    void insert_delete_at(Point cursor) {
+    void insert_delete_at(Cursor cursor) {
         if (cursor.col < buffer.at(cursor.row).size()) {
             buffer.at(cursor.row).erase(cursor.col, 1);
 
@@ -424,7 +641,7 @@ struct TextBuffer {
         return buffer.size();
     }
 
-    std::vector<std::string> get_lines(Point lp, Point rp) const {
+    std::vector<std::string> get_lines(Cursor lp, Cursor rp) const {
         if (rp <= lp) {
             // nothing to return; should we instead return {""}?
             return {};
@@ -459,13 +676,14 @@ struct TextBuffer {
         return to_return;
     }
 
-    Point replace_text_at(Point lp, Point rp, std::vector<std::string> lines) {
+    Cursor replace_text_at(Cursor lp, Cursor rp,
+                           std::vector<std::string> lines) {
         remove_text_at(lp, rp);
-        Point to_return = insert_text_at(lp, std::move(lines));
+        Cursor to_return = insert_text_at(lp, std::move(lines));
         return to_return;
     }
 
-    void remove_text_at(Point lp, Point rp) {
+    void remove_text_at(Cursor lp, Cursor rp) {
         if (lp.row == rp.row) {
             std::string right_half = buffer.at(lp.row).substr(rp.col);
 
@@ -500,7 +718,7 @@ struct TextBuffer {
         insert_delete_at(lp);
     }
 
-    Point insert_text_at(Point point, std::vector<std::string> lines) {
+    Cursor insert_text_at(Cursor point, std::vector<std::string> lines) {
         // break the line at point
         assert(!lines.empty());
 
@@ -511,11 +729,15 @@ struct TextBuffer {
             buffer.at(point.row).append(right_half);
             starting_byte_offset.set_position_size(point.row,
                                                    buffer.at(point.row).size());
-            return {point.row, point.col + lines.front().size()};
+            size_t effective_width_offset =
+                StringUtils::var_width_str_into_effective_width(lines.front());
+            return {point.row, point.col + lines.front().size(),
+                    point.effective_col + effective_width_offset};
         }
 
-        Point final_insertion_point = {point.row + lines.size() - 1,
-                                       lines.back().size()};
+        Cursor final_insertion_point = {
+            point.row + lines.size() - 1, lines.back().size(),
+            StringUtils::var_width_str_into_effective_width(lines.back())};
 
         std::string right_half = buffer.at(point.row).substr(point.col);
         buffer.at(point.row).resize(point.col); // retains the old string
@@ -535,7 +757,7 @@ struct TextBuffer {
         return final_insertion_point;
     }
 
-    void insert_text_at(Point point, char ch) {
+    void insert_text_at(Cursor point, char ch) {
         insert_text_at(point, {{ch}});
     }
 
@@ -551,6 +773,10 @@ struct TextBuffer {
         }
 
         return to_ret;
+    }
+
+    char operator[](Cursor cursor) const {
+        return buffer.at(cursor.row)[cursor.col];
     }
 };
 

@@ -54,6 +54,51 @@ struct Point {
     }
 };
 
+struct Cursor {
+    // should only store things that are not easily changed globally without
+    // the cursor itself being involved.
+
+    // e.g. storing your effective column width (after var width chars) is fine
+    // because when you're doing text manipulation, the line the cursor is on
+    // is likely to be manipulated.
+
+    // things like line wrap widths can be changed without involving Cursor
+    // so we should avoid storing anything that might be invalidated easily
+    // because of that.
+    size_t row;
+    size_t col;
+    size_t effective_col;
+
+    operator Point() const {
+        return Point{row, col};
+    }
+
+    Cursor()
+        : row(0),
+          col(0),
+          effective_col(0) {
+    }
+
+    Cursor(size_t r, size_t c, size_t ec)
+        : row(r),
+          col(c),
+          effective_col(ec) {
+    }
+
+    friend auto operator<=>(Cursor const &a, Cursor const &b) = default;
+
+    Cursor operator+(Cursor const &other) const {
+        return Cursor{row + other.row, col + other.col,
+                      effective_col + other.effective_col};
+    }
+
+    friend std::ostream &operator<<(std::ostream &os, Cursor const &p) {
+        os << "{.row = " << p.row << ", .col = " << p.col
+           << ", .effective_col = " << p.effective_col << "}";
+        return os;
+    }
+};
+
 typedef TSLanguage *(*parser_fn_ptr_t)(void);
 
 // RAII-based wrapper for dynamically linked functions
