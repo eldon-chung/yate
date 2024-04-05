@@ -1,5 +1,5 @@
 CXX := clang++
-CXXFLAGS := -std=c++20 -Wfatal-errors -Wall -Wextra -Wpedantic -Wconversion -Wshadow
+CXXFLAGS := -std=c++20 -Wfatal-errors -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wno-vla-extension
 CC := clang
 CFLAGS := -std=c17 
 LDFLAGS := -lnotcurses  -lnotcurses-core -lunistring -lm -ltinfo -ltree-sitter

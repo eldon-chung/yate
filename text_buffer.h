@@ -50,7 +50,6 @@ inline std::optional<Cursor> maybe_down_point(std::string_view sv,
 
     assert(cursor.col <= sv.size());
 
-    size_t curr_start_col = 0;
     size_t curr_start_effective_col = 0;
     size_t curr_chunk_width = 0;
     size_t cumulative_width = 0;
@@ -65,7 +64,6 @@ inline std::optional<Cursor> maybe_down_point(std::string_view sv,
             continue;
         }
 
-        curr_start_col = col;
         curr_start_effective_col = cumulative_width;
         curr_chunk_width = 0;
     }
@@ -179,7 +177,8 @@ columns_of_chunked_text(std::string_view sv, size_t width) {
     return starting_indices;
 }
 
-inline Cursor first_chunk(std::string_view sv, Cursor cursor, size_t width) {
+inline Cursor first_chunk(std::string_view sv, Cursor cursor,
+                          [[maybe_unused]] size_t width) {
     size_t col = 0, effective_width = 0;
     while (col < sv.size() && effective_width <= cursor.effective_col) {
         if (effective_width + StringUtils::symbol_into_width(sv[col]) >
