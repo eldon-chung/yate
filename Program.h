@@ -1113,7 +1113,7 @@ class TextState : public ProgramState {
 
     Cursor move_cursor_up(Cursor const &p) const {
         Cursor to_return = p;
-        if (view_ptr->get_wrap_status() == WrapStatus::NOWRAP) {
+        if (view_ptr->get_wrap_status(plane_fd) == WrapStatus::NOWRAP) {
             // non-wrapping movement
             to_return.col =
                 std::min(to_return.col, text_buffer.at(--to_return.row).size());
@@ -1146,7 +1146,7 @@ class TextState : public ProgramState {
     Cursor move_cursor_down(Cursor const &p) const {
         Cursor to_return = p;
 
-        if (view_ptr->get_wrap_status() == WrapStatus::NOWRAP) {
+        if (view_ptr->get_wrap_status(plane_fd) == WrapStatus::NOWRAP) {
             // non-wrapping movement
             if (to_return.row + 1 < text_buffer.num_lines()) {
                 ++to_return.row;

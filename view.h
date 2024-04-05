@@ -260,6 +260,8 @@ class TextPlane {
 
     TextPlaneModel model;
 
+    WrapStatus wrap_status;
+
     ncplane *line_number_plane_ptr;
     ncplane *plane_ptr;
     ncplane *cursor_plane_ptr;
@@ -276,6 +278,7 @@ class TextPlane {
     TextPlane(ncplane *parent_plane, TextPlaneModel tpm, unsigned int num_rows,
               unsigned int num_cols)
         : model(tpm),
+          wrap_status(WrapStatus::WRAP),
           tl_corner(Point{0, 0}),
           br_corner(Point{std::string::npos, std::string::npos}) {
 
@@ -361,7 +364,7 @@ class TextPlane {
         swap(a.br_corner, b.br_corner);
     }
 
-    void render(WrapStatus wrap_status) {
+    void render() {
         // make this vector a fixed array to avoid allocations?
         render_text();
         render_cursor(wrap_status);
@@ -370,6 +373,10 @@ class TextPlane {
             render_highlights();
         }
         render_line_numbers();
+    }
+
+    WrapStatus get_wrap_status() const {
+        return wrap_status;
     }
 
     ssize_t num_visual_lines_from_tl(Point const &p, WrapStatus wrap_status) {
@@ -745,7 +752,7 @@ class TextPlane {
         // TODO: what happens if nowrap
     }
 
-    void chase_point(Point point, WrapStatus wrap_status) {
+    void chase_point(Point point) {
         // moves the top left corner to cover that row
         // later we can add scrolling perhaps
 
@@ -939,19 +946,12 @@ class View {
     size_t active_text_plane_idx;
     CommandPalettePlane cmd_plane;
 
-    // eventually move this out into
-    // its own UI element
-    size_t starting_row;
-
-    WrapStatus wrap_status;
-
     View() {
     }
 
     View(notcurses *nc)
         : nc_ptr(nc),
-          active_text_plane_idx(0),
-          wrap_status(WrapStatus::WRAP) {
+          active_text_plane_idx(0) {
         unsigned int y, x;
         ncplane_dim_yx(notcurses_stdplane(nc), &y, &x);
         cmd_plane.initialise(notcurses_stdplane(nc), (int)y - 1, 0, x);
@@ -980,7 +980,6 @@ class View {
         using std::swap;
         swap(a.nc_ptr, b.nc_ptr);
         swap(a.cmd_plane, b.cmd_plane);
-        swap(a.wrap_status, b.wrap_status);
     }
 
     size_t create_text_plane(TextPlaneModel tpm) {
@@ -995,12 +994,8 @@ class View {
         cmd_plane.set_model(ppm);
     }
 
-    size_t get_starting_row() const {
-        return starting_row;
-    }
-
-    WrapStatus get_wrap_status() const {
-        return wrap_status;
+    WrapStatus get_wrap_status(size_t plane_fd) const {
+        return text_plane_list.at(plane_fd).get_wrap_status();
     }
 
     static View &init_view() {
@@ -1019,7 +1014,7 @@ class View {
     }
 
     void render_text() {
-        text_plane_list.at(active_text_plane_idx).render(wrap_status);
+        text_plane_list.at(active_text_plane_idx).render();
         notcurses_render(nc_ptr);
     }
 
@@ -1049,7 +1044,7 @@ class View {
     }
 
     void chase_point(Point p) {
-        text_plane_list.at(active_text_plane_idx).chase_point(p, wrap_status);
+        text_plane_list.at(active_text_plane_idx).chase_point(p);
     }
 
     // Helper methods
