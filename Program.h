@@ -61,7 +61,7 @@ struct StateReturn {
     }
 };
 
-StateReturn null_func() {
+inline StateReturn null_func() {
     return StateReturn();
 }
 
