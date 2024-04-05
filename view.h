@@ -962,8 +962,9 @@ class View {
     View &operator=(View const &) = delete;
     View(View &&other)
         : nc_ptr(std::exchange(other.nc_ptr, nullptr)),
-          cmd_plane(std::move(other.cmd_plane)),
-          wrap_status(other.wrap_status) {
+          text_plane_list(std::move(other.text_plane_list)),
+          active_text_plane_idx(other.active_text_plane_idx),
+          cmd_plane(std::move(other.cmd_plane)) {
     }
 
     View &operator=(View &&other) {

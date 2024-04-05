@@ -47,7 +47,6 @@ inline size_t var_width_str_into_effective_width(std::string_view sv) {
 
 inline std::optional<Cursor> maybe_down_point(std::string_view sv,
                                               Cursor cursor, size_t width) {
-    std::cerr << " maybe_down_point " << std::endl;
 
     assert(cursor.col <= sv.size());
 
@@ -91,7 +90,7 @@ inline std::optional<Cursor> maybe_down_point(std::string_view sv,
     if (!next_start_col) {
         return {};
     }
-    std::cerr << " we can find next chunk " << std::endl;
+
     // now same trick as before:
     // then try to retarget this width if possible.
     assert(next_start_col);
