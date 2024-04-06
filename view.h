@@ -8,6 +8,7 @@
 #include <notcurses/notcurses.h>
 
 #include <algorithm>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -166,66 +167,31 @@ enum class WrapStatus {
 
 struct NCPlane {
     ncplane *ptr;
-    std::string name;                    // for debugging
-    std::string permaname = "permaname"; // for debugging
 
     NCPlane(ncplane *base, int y, int x, unsigned y_len, unsigned x_len) {
         assert(base);
-        ncplane_options opts{.y = y,
-                             .x = x,
-                             .rows = y_len,
-                             .cols = x_len,
-                             .name = permaname.c_str()};
+        ncplane_options opts{.y = y, .x = x, .rows = y_len, .cols = x_len};
         ptr = ncplane_create(base, &opts);
         assert(ptr);
     }
 
     NCPlane(NCPlane &base, int y, int x, unsigned y_len, unsigned x_len) {
         assert(base.get());
-        ncplane_options opts{.y = y,
-                             .x = x,
-                             .rows = y_len,
-                             .cols = x_len,
-                             .name = permaname.c_str()};
-        ptr = ncplane_create(base.get(), &opts);
-        assert(ptr);
-    }
-
-    NCPlane(ncplane *base, int y, int x, unsigned y_len, unsigned x_len,
-            std::string name_)
-        : name(std::move(name_)) {
-        assert(base);
-        ncplane_options opts{
-            .y = y, .x = x, .rows = y_len, .cols = x_len, .name = name.c_str()};
-        ptr = ncplane_create(base, &opts);
-        assert(ptr);
-    }
-
-    NCPlane(NCPlane &base, int y, int x, unsigned y_len, unsigned x_len,
-            std::string name_)
-        : name(std::move(name_)) {
-        assert(base.get());
-        ncplane_options opts{
-            .y = y, .x = x, .rows = y_len, .cols = x_len, .name = name.c_str()};
+        ncplane_options opts{.y = y, .x = x, .rows = y_len, .cols = x_len};
         ptr = ncplane_create(base.get(), &opts);
         assert(ptr);
     }
 
     ~NCPlane() {
-        // this segfaults and I dont know why.
-        //  gdb indicates something ncplane struct data being corrupted.\
-
-        // so i actually can't call this.
-        // if (ptr) {
-        //     ncplane_destroy(ptr);
-        // }
+        if (ptr) {
+            ncplane_destroy(ptr);
+        }
     }
 
     NCPlane(NCPlane const &) = delete;
     NCPlane &operator=(NCPlane const &) = delete;
     NCPlane(NCPlane &&other)
-        : ptr(std::exchange(other.ptr, nullptr)),
-          name(std::move(other.name)) {
+        : ptr(std::exchange(other.ptr, nullptr)) {
     }
     NCPlane &operator=(NCPlane &&other) {
         NCPlane temp(std::move(other));
@@ -235,7 +201,6 @@ struct NCPlane {
 
     friend void swap(NCPlane &a, NCPlane &b) {
         std::swap(a.ptr, b.ptr);
-        std::swap(a.name, b.name);
     }
 
     ncplane *get() {
@@ -419,16 +384,15 @@ class TextPlane {
     }
 
     ~TextPlane() {
-
-        if (!line_number_plane_ptr) {
+        if (line_number_plane_ptr) {
             ncplane_destroy(line_number_plane_ptr); // let's try one
         }
 
-        if (!cursor_plane_ptr) {
+        if (cursor_plane_ptr) {
             ncplane_destroy(cursor_plane_ptr); // let's try one
         }
 
-        if (!plane_ptr) {
+        if (plane_ptr) {
             ncplane_destroy(plane_ptr); // let's try one
         }
     }
@@ -889,158 +853,12 @@ class TextPlane {
   private:
 };
 
-struct CommandPalettePlane {
-    // 1024 has to be enough right!?
-    // the thing is if we do it this way
-    // then the only way to access this is via the
-    // prompt state
-
-    BottomPlaneModel prompt_plane_model;
-
-    ncplane *plane_ptr;
-    ncplane *cursor_ptr;
-
-    bool has_notif;
-
-    CommandPalettePlane()
-        : plane_ptr(nullptr),
-          cursor_ptr(nullptr),
-          has_notif(false) {
-    }
-
-    void set_model(BottomPlaneModel ppm) {
-        prompt_plane_model = ppm;
-    }
-
-    void initialise(ncplane *base_ptr, int y_, int x_, unsigned int num_cols) {
-
-        ncplane_options ncopts = {
-            .y = y_, .x = x_, .rows = 1, .cols = num_cols};
-        plane_ptr = ncplane_create(base_ptr, &ncopts);
-
-        nccell cmd_palette_base_cell = {
-            .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 102, 153, 153)};
-
-        ncplane_set_base_cell(plane_ptr, &cmd_palette_base_cell);
-
-        ncopts = {.y = 0, .x = 0, .rows = 1, .cols = 1};
-        cursor_ptr = ncplane_create(plane_ptr, &ncopts);
-
-        nccell cursor_base_cell = {
-            .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 255, 255, 255)};
-
-        ncplane_set_base_cell(cursor_ptr, &cursor_base_cell);
-
-        hide_cursor();
-    }
-    ~CommandPalettePlane() {
-        if (!cursor_ptr) {
-            ncplane_destroy(cursor_ptr);
-        }
-
-        if (!plane_ptr) {
-            ncplane_destroy(plane_ptr);
-        }
-    }
-
-    CommandPalettePlane(CommandPalettePlane const &) = delete;
-    CommandPalettePlane &operator=(CommandPalettePlane const &) = delete;
-    CommandPalettePlane(CommandPalettePlane &&other)
-        : plane_ptr(std::exchange(other.plane_ptr, nullptr)),
-          cursor_ptr(std::exchange(other.cursor_ptr, nullptr)),
-          has_notif(other.has_notif) {
-    }
-
-    CommandPalettePlane &operator=(CommandPalettePlane &&other) {
-        CommandPalettePlane temp{std::move(other)};
-        swap(*this, temp);
-        return *this;
-    }
-
-    friend void swap(CommandPalettePlane &a, CommandPalettePlane &b) {
-        using std::swap;
-        swap(a.plane_ptr, b.plane_ptr);
-        swap(a.cursor_ptr, b.cursor_ptr);
-        swap(a.has_notif, b.has_notif);
-    }
-
-    void render() {
-        if (!has_notif) {
-            ncplane_erase(plane_ptr);
-
-            render_cmd();
-            render_cursor();
-        } else {
-            clear_notif();
-        }
-    }
-
-    void clear() {
-        hide_cursor();
-        ncplane_erase(plane_ptr);
-    }
-
-    void notify(std::string_view notif) {
-        has_notif = true;
-        ncplane_erase(plane_ptr);
-        if (!notif.empty()) {
-            ncplane_putstr_yx(plane_ptr, 0, 0, notif.data());
-            // and style it
-            ncplane_stain(
-                plane_ptr, 0, 0, 1, (unsigned int)notif.size(),
-                BG_INITIALIZER(102, 102, 153), BG_INITIALIZER(102, 102, 153),
-                BG_INITIALIZER(102, 102, 153), BG_INITIALIZER(102, 102, 153));
-        }
-    }
-
-    void clear_notif() {
-        has_notif = false;
-    }
-
-    void render_cmd() {
-        ncplane_erase(plane_ptr);
-        // first we putstr the prompt
-        if (!prompt_plane_model.get_prompt_str().empty()) {
-            ncplane_putstr_yx(plane_ptr, 0, 0,
-                              prompt_plane_model.get_prompt_str().data());
-            // and style it
-            ncplane_stain(
-                plane_ptr, 0, 0, 1,
-                (unsigned int)prompt_plane_model.get_prompt_str().size(),
-                BG_INITIALIZER(105, 105, 105), BG_INITIALIZER(105, 105, 105),
-                BG_INITIALIZER(105, 105, 105), BG_INITIALIZER(105, 105, 105));
-        }
-        if (!prompt_plane_model.get_cmd_buf().empty()) {
-            ncplane_putstr(plane_ptr, prompt_plane_model.get_cmd_buf().data());
-        }
-    }
-
-    void render_cursor() {
-        ncplane_move_yx(cursor_ptr, 0,
-                        (int)(prompt_plane_model.get_cursor() +
-                              prompt_plane_model.get_prompt_str().size()));
-    }
-    void show_cursor() {
-        ncplane_move_above(cursor_ptr, plane_ptr);
-    }
-
-    void hide_cursor() {
-        ncplane_move_below(cursor_ptr, plane_ptr);
-    }
-
-    std::pair<unsigned, unsigned> get_plane_yx_dim() const {
-        unsigned y, x;
-        ncplane_dim_yx(plane_ptr, &y, &x);
-        return {y, x};
-    }
-};
-
 struct BottomPane {
     NCPlane cmd_plane; // for both cmds and notifs
     NCPlane status_pane;
 
     // parent is cmd_plane
-    NCPlane cmd_cursor_plane;
+    // NCPlane cmd_cursor_plane;
 
     bool has_notif = false;
 
@@ -1049,19 +867,26 @@ struct BottomPane {
     BottomPane(NCPlane &base_plane, [[maybe_unused]] int y,
                [[maybe_unused]] int x, [[maybe_unused]] unsigned height,
                unsigned width)
-        : cmd_plane(base_plane, y, 0, 1, 3 * width / 4, "cmd_plane"),
+        : cmd_plane(base_plane, y, 0, 1, 3 * width / 4),
           status_pane(base_plane, y, 3 * width / 4, 1,
-                      width - cmd_plane.width(), "status"),
-          cmd_cursor_plane(cmd_plane, 0, 0, 1, 1, "cmd cursor") {
+                      width - cmd_plane.width())
+    //   cmd_cursor_plane(base_plane, 0, 0, 1, 1, "cmd cursor") {
+    {
 
         nccell cmd_palette_base_cell = {
             .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 102, 153, 153)};
         ncplane_set_base_cell(cmd_plane.get(), &cmd_palette_base_cell);
-        ncplane_set_base_cell(status_pane.get(), &cmd_palette_base_cell);
 
-        nccell cursor_base_cell = {
-            .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 255, 255, 255)};
-        ncplane_set_base_cell(cmd_cursor_plane.get(), &cursor_base_cell);
+        nccell status_base_cell = {
+            .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 102, 153, 255)};
+        ncplane_set_base_cell(status_pane.get(), &status_base_cell);
+
+        // nccell cursor_base_cell = {
+        //     .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 255, 255, 255)};
+        // ncplane_set_base_cell(cmd_cursor_plane.get(), &cursor_base_cell);
+
+        // force an early deletion
+        // cmd_cursor_plane = NCPlane(cmd_plane, 0, 0, 1, 1, "cmd cursor 2");
     }
 
     void set_model(BottomPlaneModel to_set) {
@@ -1069,7 +894,6 @@ struct BottomPane {
     }
 
     void render_status() {
-        // TODO:
         ncplane_putstr(status_pane.get(), "status pane: ");
     }
 
@@ -1091,8 +915,9 @@ struct BottomPane {
         }
 
         // TODO: fix this logic in the case of long cmd strings
-        ncplane_move_yx(cmd_cursor_plane.get(), 0,
-                        (int)(bpm.get_cursor() + bpm.get_prompt_str().size()));
+        // ncplane_move_yx(cmd_cursor_plane.get(), 0,
+        //                 (int)(bpm.get_cursor() +
+        //                 bpm.get_prompt_str().size()));
     }
 
     // overwrite cmd pane
@@ -1110,11 +935,11 @@ struct BottomPane {
     }
 
     void show_cursor() {
-        ncplane_move_above(cmd_cursor_plane.get(), cmd_plane.get());
+        // ncplane_move_above(cmd_cursor_plane.get(), cmd_plane.get());
     }
 
     void hide_cursor() {
-        ncplane_move_below(cmd_cursor_plane.get(), cmd_plane.get());
+        // ncplane_move_below(cmd_cursor_plane.get(), cmd_plane.get());
     }
 };
 
@@ -1124,7 +949,7 @@ struct MainPane {
     size_t active_idx;
 
     MainPane(NCPlane &base_plane, int y, int x, unsigned height, unsigned width)
-        : main_plane(base_plane, y, x, height, width, "main pane"),
+        : main_plane(base_plane, y, x, height, width),
           active_idx(0) {
     }
 
@@ -1159,7 +984,7 @@ class View {
   public:
     View(notcurses *nc, unsigned height, unsigned width)
         : nc_ptr(nc),
-          ncplane(notcurses_stdplane(nc), 0, 0, height, width, "viewbaseplane"),
+          ncplane(notcurses_stdplane(nc), 0, 0, height, width),
           main_pane(ncplane, 0, 0, height - 1, width),
           bottom_pane(ncplane, (int)height - 1, 0, 1, width) {
     }
@@ -1169,7 +994,6 @@ class View {
     View(View &&other) = delete;
     View &operator=(View &&other) = delete;
     ~View() {
-        notcurses_stop(nc_ptr);
     }
 
     TextPlane *create_text_plane(TextPlaneModel tpm) {

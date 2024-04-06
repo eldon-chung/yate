@@ -10,7 +10,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     }
 
     static struct notcurses_options nc_options = {
-        // .loglevel = NCLOGLEVEL_INFO,
+        // .loglevel = NCLOGLEVEL_TRACE,
         .flags = NCOPTION_SUPPRESS_BANNERS | NCOPTION_PRESERVE_CURSOR,
     };
     notcurses *nc = notcurses_init(&nc_options, nullptr);
@@ -20,7 +20,12 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     notcurses_linesigs_disable(nc);
 
     // set up initial state
-    Program program_state(maybe_filename, nc, y, x);
-    program_state.run_event_loop();
+    {
+        Program program_state(maybe_filename, nc, y, x);
+        program_state.run_event_loop();
+    }
+    // we have to stop this only after the program has quit
+    notcurses_stop(nc);
+
     return 0;
 }
