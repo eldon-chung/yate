@@ -633,6 +633,7 @@ class TextState : public ProgramState {
     std::vector<std::string> clipboard;
     TextPlane
         *text_plane_ptr; // how do i retrigger a reparse without giving an fd?
+    BottomPane *bottom_pane_ptr;
 
     // objects used for parsing
     std::optional<Parser<TextBuffer>> maybe_parser;
@@ -654,9 +655,9 @@ class TextState : public ProgramState {
         if (file.has_errmsg()) {
             view_ptr->notify(file.get_errmsg());
         }
-        // do a non-creating open
-        text_plane_ptr =
-            view_ptr->create_text_plane(this->get_text_plane_model());
+
+        text_plane_ptr = view_ptr->add_text_plane(this->get_text_plane_model());
+        bottom_pane_ptr = view_ptr->get_bottom_pane_ptr();
     }
     ~TextState() {
     }
@@ -695,6 +696,24 @@ class TextState : public ProgramState {
     void trigger_render() {
         view_ptr->focus_text();
         text_plane_ptr->render();
+
+        std::string status_str =
+            "Line " + std::to_string(text_cursor.row) + ", Column " +
+            std::to_string(text_cursor.effective_col) + " ";
+
+        // TODO what happens if it's not wide enough?
+        // can we at least assume 80 cols? that should be enough
+        std::string_view lang_name = "Text Mode";
+        if (maybe_parser) {
+            lang_name = maybe_parser->get_parser_lang_name();
+        }
+
+        size_t remaining_pad_length =
+            bottom_pane_ptr->width() - status_str.size() - lang_name.size();
+        status_str.resize(status_str.size() + remaining_pad_length, ' ');
+        status_str += lang_name;
+
+        bottom_pane_ptr->render_status(status_str);
     }
 
     StateReturn handle_input(ncinput nc_input) {
@@ -1301,7 +1320,7 @@ struct Program {
         state_stack.active_state()->enter();
         while (!state_stack.empty()) {
 
-            view.render_status();
+            // view.render_status();
             state_stack.active_state()->trigger_render();
             view.refresh_screen();
             Event ev = event_queue.get_event();

@@ -9,6 +9,7 @@
 #include <optional>
 
 // #include "tree_sitter/include/tree_sitter/api.h"
+#include <string_view>
 #include <tree_sitter/api.h>
 // #include "tree_sitter/languages/languages.h"
 
@@ -374,6 +375,22 @@ template <typename T> class Parser {
         ts_print_node(os, 0, cursor_at_root);
         ts_tree_cursor_delete(&cursor_at_root);
         return os;
+    }
+
+    std::string_view get_parser_lang_name() const {
+        assert(language);
+        switch (*language) {
+        case Parser::LANG::C:
+            return "C";
+        case Parser::LANG::CPP:
+            return "C++";
+        case Parser::LANG::PYTHON:
+            return "Python";
+        case Parser::LANG::JSON:
+            return "JSON";
+        default:
+            return "";
+        }
     }
 
     // make sure to grab by copy

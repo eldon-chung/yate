@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <cstdio>
+#include <deque>
 #include <signal.h>
 #include <stddef.h>
 
@@ -227,10 +228,12 @@ struct NCPlane {
 };
 
 class BottomPlaneModel {
+    // these are for cmd stuff
     std::string const *prompt_str;
     size_t const *cursor;
     std::string const *cmd_buf;
-    // TSTree const *ts_tree_ptr; // result of the parser
+
+    // parsed lang
 
   public:
     BottomPlaneModel() {
@@ -806,7 +809,7 @@ struct BottomPane {
     NCPlane status_pane;
 
     // parent is cmd_plane
-    // NCPlane cmd_cursor_plane;
+    NCPlane cmd_cursor_plane;
 
     bool has_notif = false;
 
@@ -817,9 +820,8 @@ struct BottomPane {
                unsigned width)
         : cmd_plane(base_plane, y, 0, 1, 3 * width / 4),
           status_pane(base_plane, y, 3 * width / 4, 1,
-                      width - cmd_plane.width())
-    //   cmd_cursor_plane(base_plane, 0, 0, 1, 1, "cmd cursor") {
-    {
+                      width - cmd_plane.width()),
+          cmd_cursor_plane(base_plane, 0, 0, 1, 1) {
 
         nccell cmd_palette_base_cell = {
             .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 102, 153, 153)};
@@ -829,20 +831,18 @@ struct BottomPane {
             .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 102, 153, 255)};
         ncplane_set_base_cell(status_pane.get(), &status_base_cell);
 
-        // nccell cursor_base_cell = {
-        //     .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 255, 255, 255)};
-        // ncplane_set_base_cell(cmd_cursor_plane.get(), &cursor_base_cell);
-
-        // force an early deletion
-        // cmd_cursor_plane = NCPlane(cmd_plane, 0, 0, 1, 1, "cmd cursor 2");
+        nccell cursor_base_cell = {
+            .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 255, 255, 255)};
+        ncplane_set_base_cell(cmd_cursor_plane.get(), &cursor_base_cell);
     }
 
     void set_model(BottomPlaneModel to_set) {
         bpm = to_set;
     }
 
-    void render_status() {
-        ncplane_putstr(status_pane.get(), "status pane: ");
+    void render_status(std::string const &sv) {
+        ncplane_erase(status_pane.get());
+        ncplane_putstr(status_pane.get(), sv.c_str());
     }
 
     void render_cmd() {
@@ -863,9 +863,8 @@ struct BottomPane {
         }
 
         // TODO: fix this logic in the case of long cmd strings
-        // ncplane_move_yx(cmd_cursor_plane.get(), 0,
-        //                 (int)(bpm.get_cursor() +
-        //                 bpm.get_prompt_str().size()));
+        ncplane_move_yx(cmd_cursor_plane.get(), 0,
+                        (int)(bpm.get_cursor() + bpm.get_prompt_str().size()));
     }
 
     // overwrite cmd pane
@@ -883,17 +882,22 @@ struct BottomPane {
     }
 
     void show_cursor() {
-        // ncplane_move_above(cmd_cursor_plane.get(), cmd_plane.get());
+        ncplane_move_above(cmd_cursor_plane.get(), cmd_plane.get());
     }
 
     void hide_cursor() {
-        // ncplane_move_below(cmd_cursor_plane.get(), cmd_plane.get());
+        ncplane_move_below(cmd_plane.get(), cmd_cursor_plane.get());
+    }
+
+    unsigned int width() const {
+        return ncplane_dim_x(status_pane.get());
     }
 };
 
 struct MainPane {
     NCPlane main_plane;
-    std::vector<TextPlane> text_planes;
+    // i need them to be address stable so i can't just use std::vector
+    std::deque<TextPlane> text_planes;
     size_t active_idx;
 
     MainPane(NCPlane &base_plane, int y, int x, unsigned height, unsigned width)
@@ -901,6 +905,7 @@ struct MainPane {
           active_idx(0) {
     }
 
+    // adds a new text state to the current pane
     TextPlane *add_text_plane(TextPlaneModel tpm) {
         text_planes.emplace_back(main_plane, tpm, main_plane.height(),
                                  main_plane.width());
@@ -944,16 +949,12 @@ class View {
     ~View() {
     }
 
-    TextPlane *create_text_plane(TextPlaneModel tpm) {
+    TextPlane *add_text_plane(TextPlaneModel tpm) {
         return main_pane.add_text_plane(tpm);
     }
 
     void set_prompt_plane(BottomPlaneModel bpm) {
         bottom_pane.set_model(bpm);
-    }
-
-    void render_status() {
-        bottom_pane.render_status();
     }
 
     void render_cmd() {
@@ -991,5 +992,9 @@ class View {
 
     void refresh_screen() {
         notcurses_render(nc_ptr);
+    }
+
+    BottomPane *get_bottom_pane_ptr() {
+        return &bottom_pane;
     }
 };
