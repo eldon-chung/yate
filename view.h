@@ -207,6 +207,10 @@ struct NCPlane {
         return ptr;
     }
 
+    ncplane const *get() const {
+        return ptr;
+    }
+
     std::pair<unsigned, unsigned> dims() const {
         unsigned row, cols;
         ncplane_dim_yx(ptr, &row, &cols);
@@ -320,9 +324,9 @@ class TextPlane {
 
     WrapStatus wrap_status;
 
-    ncplane *line_number_plane_ptr;
-    ncplane *plane_ptr;
-    ncplane *cursor_plane_ptr;
+    NCPlane text_plane;
+    NCPlane cursor_plane;
+    NCPlane line_number_plane;
     Point tl_corner;
     Point br_corner; // exclusive range that we also maintain
 
@@ -330,99 +334,41 @@ class TextPlane {
     std::vector<std::pair<Point, Point>> line_points;
 
   public:
-    TextPlane() {
-    }
-
-    TextPlane(ncplane *parent_plane, TextPlaneModel tpm, unsigned int num_rows,
+    TextPlane(NCPlane &parent_plane, TextPlaneModel tpm, unsigned int num_rows,
               unsigned int num_cols)
         : model(tpm),
           wrap_status(WrapStatus::WRAP),
+          text_plane(parent_plane, 0, 4, num_rows, num_cols - 4),
+          cursor_plane(text_plane, 0, 4, 1, 1),
+          line_number_plane(text_plane, 0, -4, num_rows, 4),
           tl_corner(Point{0, 0}),
           br_corner(Point{std::string::npos, std::string::npos}) {
 
         // initially model is uninitialised
 
-        static const int num_digits = 4;
-
-        // create the text_plane
-        ncplane_options text_plane_opts = {.y = 0,
-                                           .x = num_digits,
-                                           .rows = num_rows,
-                                           .cols = num_cols - num_digits,
-                                           .name = "textplane"};
-        plane_ptr = ncplane_create(parent_plane, &text_plane_opts);
-
         nccell text_plane_base_cell = {.channels = NCCHANNELS_INITIALIZER(
                                            0xff, 0xff, 0xff, 0x2c, 0x2c, 0x2c)};
-        ncplane_set_base_cell(plane_ptr, &text_plane_base_cell);
+        ncplane_set_base_cell(text_plane.get(), &text_plane_base_cell);
 
         // cursor plane opts
-        ncplane_options cursor_plane_opts = {
-            .y = 0, .x = 0, .rows = 1, .cols = 1, .name = "cursor"};
-        cursor_plane_ptr = ncplane_create(plane_ptr, &cursor_plane_opts);
 
         nccell cursor_plane_base_cell{
             .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 0xff, 0xff, 0xff)};
-
-        ncplane_set_base_cell(cursor_plane_ptr, &cursor_plane_base_cell);
-
-        // line number plane opts
-        ncplane_options line_number_plane_opts = {.y = 0,
-                                                  .x = -num_digits,
-                                                  .rows = num_rows,
-                                                  .cols = num_digits,
-                                                  .name = "line numbers"};
-
-        line_number_plane_ptr =
-            ncplane_create(plane_ptr, &line_number_plane_opts);
+        ncplane_set_base_cell(cursor_plane.get(), &cursor_plane_base_cell);
 
         nccell line_number_plane_base_cell{
             .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 66, 135, 245)};
 
-        ncplane_set_base_cell(line_number_plane_ptr,
+        ncplane_set_base_cell(line_number_plane.get(),
                               &line_number_plane_base_cell);
     }
 
     ~TextPlane() {
-        if (line_number_plane_ptr) {
-            ncplane_destroy(line_number_plane_ptr); // let's try one
-        }
-
-        if (cursor_plane_ptr) {
-            ncplane_destroy(cursor_plane_ptr); // let's try one
-        }
-
-        if (plane_ptr) {
-            ncplane_destroy(plane_ptr); // let's try one
-        }
     }
-
     TextPlane(TextPlane const &) = delete;
-    TextPlane(TextPlane &&other)
-        : model(other.model),
-          line_number_plane_ptr(
-              std::exchange(other.line_number_plane_ptr, nullptr)),
-          plane_ptr(std::exchange(other.plane_ptr, nullptr)),
-          cursor_plane_ptr(std::exchange(other.cursor_plane_ptr, nullptr)),
-          tl_corner(other.tl_corner),
-          br_corner(other.br_corner) {
-    }
     TextPlane &operator=(TextPlane const &) = delete;
-    TextPlane &operator=(TextPlane &&other) {
-        TextPlane temp{std::move(other)};
-        swap(*this, temp);
-        return *this;
-    }
-
-    friend void swap(TextPlane &a, TextPlane &b) {
-        using std::swap;
-        swap(a.model, b.model);
-        swap(a.line_number_plane_ptr, b.line_number_plane_ptr);
-        swap(a.plane_ptr, b.plane_ptr);
-        swap(a.cursor_plane_ptr, b.cursor_plane_ptr);
-        swap(a.tl_corner, b.tl_corner);
-        swap(a.br_corner, b.br_corner);
-    }
+    TextPlane(TextPlane &&) = default;
+    TextPlane &operator=(TextPlane &&) = default;
 
     void render() {
         // make this vector a fixed array to avoid allocations?
@@ -512,7 +458,7 @@ class TextPlane {
 
         // need this for base colour things
         nccell base_cell;
-        ncplane_base(plane_ptr, &base_cell);
+        ncplane_base(text_plane.get(), &base_cell);
 
         auto apply_style = [=, this](size_t y, size_t x, size_t ylen,
                                      size_t xlen,
@@ -539,14 +485,15 @@ class TextPlane {
             }
 
             if (restain) {
-                ncplane_stain(plane_ptr, (int)y, (int)x, (unsigned int)ylen,
-                              (unsigned int)xlen,
+                ncplane_stain(text_plane.get(), (int)y, (int)x,
+                              (unsigned int)ylen, (unsigned int)xlen,
                               ncstain_args(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b));
             }
 
             if (hl.has_style()) {
-                ncplane_format(plane_ptr, (int)y, (int)x, (unsigned int)ylen,
-                               (unsigned int)xlen, hl.nc_style);
+                ncplane_format(text_plane.get(), (int)y, (int)x,
+                               (unsigned int)ylen, (unsigned int)xlen,
+                               hl.nc_style);
             }
         };
 
@@ -623,7 +570,7 @@ class TextPlane {
         // TODO: on the first number, indicate if there's more to that line
         // being wrapped from the previous visual row
 
-        ncplane_erase(line_number_plane_ptr);
+        ncplane_erase(line_number_plane.get());
         size_t curr_logical_row = std::string::npos;
 
         char out_str[5];
@@ -632,8 +579,8 @@ class TextPlane {
             if (curr_logical_row != line_points.at(visual_row_idx).first.row) {
                 curr_logical_row = line_points.at(visual_row_idx).first.row;
                 snprintf(out_str, 5, "%zu", curr_logical_row + 1);
-                ncplane_putnstr_yx(line_number_plane_ptr, (int)(visual_row_idx),
-                                   0, 3, out_str);
+                ncplane_putnstr_yx(line_number_plane.get(),
+                                   (int)(visual_row_idx), 0, 3, out_str);
             }
         }
     }
@@ -644,7 +591,7 @@ class TextPlane {
         // we just hide the cursor and return;
         if (model.get_cursor() > line_points.back().second ||
             model.get_cursor() < line_points.front().first) {
-            ncplane_move_below(cursor_plane_ptr, plane_ptr);
+            ncplane_move_below(cursor_plane.get(), text_plane.get());
             return;
         }
 
@@ -679,16 +626,16 @@ class TextPlane {
         }
 
         if (vis_col == col_count) {
-            ncplane_move_yx(cursor_plane_ptr, (int)vis_row + 1, 0);
+            ncplane_move_yx(cursor_plane.get(), (int)vis_row + 1, 0);
         } else {
-            ncplane_move_yx(cursor_plane_ptr, (int)vis_row, (int)vis_col);
+            ncplane_move_yx(cursor_plane.get(), (int)vis_row, (int)vis_col);
         }
 
         // else todo the nowrap case
     }
 
     std::vector<std::pair<Point, Point>> render_text() {
-        ncplane_erase(plane_ptr);
+        ncplane_erase(text_plane.get());
         // get the text_plane size
         auto dims = get_plane_yx_dim();
         size_t row_count = dims.first, col_count = dims.second;
@@ -748,7 +695,7 @@ class TextPlane {
                curr_logical_row < model.num_lines()) {
             size_t num_vis_chars = into_vis_line_buf();
 
-            ncplane_putnstr_yx(plane_ptr, (int)num_lines_output++, 0,
+            ncplane_putnstr_yx(text_plane.get(), (int)num_lines_output++, 0,
                                num_vis_chars, vis_line_buf);
             // ncplane_putnstr_yx(plane_ptr, (int)num_lines_output++, 0,
             //                    rendered_string_buf.back().size(),
@@ -764,7 +711,7 @@ class TextPlane {
         return line_points;
     }
 
-    std::pair<unsigned int, unsigned int> get_yx_dim(ncplane *ptr) const {
+    std::pair<unsigned int, unsigned int> get_yx_dim(ncplane const *ptr) const {
         unsigned int num_rows, num_cols;
         ncplane_dim_yx(ptr, &num_rows, &num_cols);
         return {num_rows, num_cols};
@@ -772,12 +719,12 @@ class TextPlane {
 
   public:
     std::pair<unsigned int, unsigned int> get_plane_yx_dim() const {
-        return get_yx_dim(plane_ptr);
+        return get_yx_dim(text_plane.get());
     }
 
   private:
     void visual_scroll_up() {
-        auto [num_rows, num_cols] = get_yx_dim(plane_ptr);
+        auto [num_rows, num_cols] = get_yx_dim(text_plane.get());
         if (wrap_status == WrapStatus::WRAP) {
             if (tl_corner.col == 0) {
                 assert(tl_corner.row > 0);
@@ -800,7 +747,7 @@ class TextPlane {
     }
 
     void visual_scroll_down() {
-        auto [num_rows, num_cols] = get_yx_dim(plane_ptr);
+        auto [num_rows, num_cols] = get_yx_dim(text_plane.get());
         if (wrap_status == WrapStatus::WRAP) {
             if (tl_corner.col + num_cols > model.at(tl_corner.row).size()) {
                 assert(tl_corner.row + 1 < model.num_lines());
@@ -844,10 +791,11 @@ class TextPlane {
     }
 
     void hide_cursor() {
-        ncplane_move_below(cursor_plane_ptr, plane_ptr);
+        ncplane_move_below(text_plane.get(), cursor_plane.get());
     }
+
     void show_cursor() {
-        ncplane_move_above(cursor_plane_ptr, plane_ptr);
+        ncplane_move_above(cursor_plane.get(), text_plane.get());
     }
 
   private:
@@ -954,7 +902,7 @@ struct MainPane {
     }
 
     TextPlane *add_text_plane(TextPlaneModel tpm) {
-        text_planes.emplace_back(main_plane.get(), tpm, main_plane.height(),
+        text_planes.emplace_back(main_plane, tpm, main_plane.height(),
                                  main_plane.width());
         active_idx = text_planes.size() - 1;
         return &text_planes.back();
@@ -1027,14 +975,6 @@ class View {
     }
 
     // Helper methods
-    std::pair<unsigned int, unsigned int>
-    get_text_plane_dim(size_t plane_descriptor) {
-        unsigned int y, x;
-        ncplane_dim_yx(text_plane_list.at(plane_descriptor).plane_ptr, &y, &x);
-        return {y, x};
-    }
-
-    // TODO: refactor the focus methods
     void focus_cmd() {
         main_pane.hide_cursor();
         bottom_pane.show_cursor();
