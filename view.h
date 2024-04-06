@@ -164,17 +164,110 @@ enum class WrapStatus {
     NOWRAP,
 };
 
-class PromptPlaneModel {
+struct NCPlane {
+    ncplane *ptr;
+    std::string name;                    // for debugging
+    std::string permaname = "permaname"; // for debugging
+
+    NCPlane(ncplane *base, int y, int x, unsigned y_len, unsigned x_len) {
+        assert(base);
+        ncplane_options opts{.y = y,
+                             .x = x,
+                             .rows = y_len,
+                             .cols = x_len,
+                             .name = permaname.c_str()};
+        ptr = ncplane_create(base, &opts);
+        assert(ptr);
+    }
+
+    NCPlane(NCPlane &base, int y, int x, unsigned y_len, unsigned x_len) {
+        assert(base.get());
+        ncplane_options opts{.y = y,
+                             .x = x,
+                             .rows = y_len,
+                             .cols = x_len,
+                             .name = permaname.c_str()};
+        ptr = ncplane_create(base.get(), &opts);
+        assert(ptr);
+    }
+
+    NCPlane(ncplane *base, int y, int x, unsigned y_len, unsigned x_len,
+            std::string name_)
+        : name(std::move(name_)) {
+        assert(base);
+        ncplane_options opts{
+            .y = y, .x = x, .rows = y_len, .cols = x_len, .name = name.c_str()};
+        ptr = ncplane_create(base, &opts);
+        assert(ptr);
+    }
+
+    NCPlane(NCPlane &base, int y, int x, unsigned y_len, unsigned x_len,
+            std::string name_)
+        : name(std::move(name_)) {
+        assert(base.get());
+        ncplane_options opts{
+            .y = y, .x = x, .rows = y_len, .cols = x_len, .name = name.c_str()};
+        ptr = ncplane_create(base.get(), &opts);
+        assert(ptr);
+    }
+
+    ~NCPlane() {
+        // this segfaults and I dont know why.
+        //  gdb indicates something ncplane struct data being corrupted.\
+
+        // so i actually can't call this.
+        // if (ptr) {
+        //     ncplane_destroy(ptr);
+        // }
+    }
+
+    NCPlane(NCPlane const &) = delete;
+    NCPlane &operator=(NCPlane const &) = delete;
+    NCPlane(NCPlane &&other)
+        : ptr(std::exchange(other.ptr, nullptr)),
+          name(std::move(other.name)) {
+    }
+    NCPlane &operator=(NCPlane &&other) {
+        NCPlane temp(std::move(other));
+        swap(*this, other);
+        return *this;
+    }
+
+    friend void swap(NCPlane &a, NCPlane &b) {
+        std::swap(a.ptr, b.ptr);
+        std::swap(a.name, b.name);
+    }
+
+    ncplane *get() {
+        return ptr;
+    }
+
+    std::pair<unsigned, unsigned> dims() const {
+        unsigned row, cols;
+        ncplane_dim_yx(ptr, &row, &cols);
+        return {row, cols};
+    }
+
+    unsigned height() const {
+        return ncplane_dim_y(ptr);
+    }
+
+    unsigned width() const {
+        return ncplane_dim_x(ptr);
+    }
+};
+
+class BottomPlaneModel {
     std::string const *prompt_str;
     size_t const *cursor;
     std::string const *cmd_buf;
     // TSTree const *ts_tree_ptr; // result of the parser
 
   public:
-    PromptPlaneModel() {
+    BottomPlaneModel() {
     }
 
-    PromptPlaneModel(std::string const *ps, size_t const *c,
+    BottomPlaneModel(std::string const *ps, size_t const *c,
                      std::string const *cb)
         : prompt_str(ps),
           cursor(c),
@@ -300,7 +393,7 @@ class TextPlane {
 
         // cursor plane opts
         ncplane_options cursor_plane_opts = {
-            .y = 0, .x = 0, .rows = 1, .cols = 1};
+            .y = 0, .x = 0, .rows = 1, .cols = 1, .name = "cursor"};
         cursor_plane_ptr = ncplane_create(plane_ptr, &cursor_plane_opts);
 
         nccell cursor_plane_base_cell{
@@ -309,8 +402,11 @@ class TextPlane {
         ncplane_set_base_cell(cursor_plane_ptr, &cursor_plane_base_cell);
 
         // line number plane opts
-        ncplane_options line_number_plane_opts = {
-            .y = 0, .x = -num_digits, .rows = num_rows, .cols = num_digits};
+        ncplane_options line_number_plane_opts = {.y = 0,
+                                                  .x = -num_digits,
+                                                  .rows = num_rows,
+                                                  .cols = num_digits,
+                                                  .name = "line numbers"};
 
         line_number_plane_ptr =
             ncplane_create(plane_ptr, &line_number_plane_opts);
@@ -367,7 +463,7 @@ class TextPlane {
     void render() {
         // make this vector a fixed array to avoid allocations?
         render_text();
-        render_cursor(wrap_status);
+        render_cursor();
         render_selection();
         if (model.has_parser()) {
             render_highlights();
@@ -379,7 +475,7 @@ class TextPlane {
         return wrap_status;
     }
 
-    ssize_t num_visual_lines_from_tl(Point const &p, WrapStatus wrap_status) {
+    ssize_t num_visual_lines_from_tl(Point const &p) {
         auto [row_count, col_count] = get_plane_yx_dim();
 
         if (wrap_status == WrapStatus::NOWRAP) {
@@ -578,7 +674,7 @@ class TextPlane {
         }
     }
 
-    void render_cursor([[gnu::unused]] WrapStatus wrap_status) {
+    void render_cursor() {
 
         // if our text plane right now doesn't contain the cursor
         // we just hide the cursor and return;
@@ -710,11 +806,13 @@ class TextPlane {
         return {num_rows, num_cols};
     }
 
+  public:
     std::pair<unsigned int, unsigned int> get_plane_yx_dim() const {
         return get_yx_dim(plane_ptr);
     }
 
-    void visual_scroll_up(WrapStatus wrap_status) {
+  private:
+    void visual_scroll_up() {
         auto [num_rows, num_cols] = get_yx_dim(plane_ptr);
         if (wrap_status == WrapStatus::WRAP) {
             if (tl_corner.col == 0) {
@@ -737,7 +835,7 @@ class TextPlane {
         // TODO: what happens if nowrap
     }
 
-    void visual_scroll_down(WrapStatus wrap_status) {
+    void visual_scroll_down() {
         auto [num_rows, num_cols] = get_yx_dim(plane_ptr);
         if (wrap_status == WrapStatus::WRAP) {
             if (tl_corner.col + num_cols > model.at(tl_corner.row).size()) {
@@ -752,6 +850,7 @@ class TextPlane {
         // TODO: what happens if nowrap
     }
 
+  public:
     void chase_point(Point point) {
         // moves the top left corner to cover that row
         // later we can add scrolling perhaps
@@ -762,8 +861,7 @@ class TextPlane {
         assert(tl_corner < br_corner);
 
         auto [num_rows, num_cols] = get_plane_yx_dim();
-        ssize_t visual_row_offset =
-            num_visual_lines_from_tl(point, wrap_status);
+        ssize_t visual_row_offset = num_visual_lines_from_tl(point);
 
         if (visual_row_offset >= 0 && visual_row_offset <= num_rows - 1) {
             // still within the screen
@@ -771,12 +869,12 @@ class TextPlane {
         }
 
         while (visual_row_offset >= num_rows) {
-            visual_scroll_down(wrap_status);
+            visual_scroll_down();
             --visual_row_offset;
         }
 
         while (visual_row_offset < 0) {
-            visual_scroll_up(wrap_status);
+            visual_scroll_up();
             ++visual_row_offset;
         }
     }
@@ -787,6 +885,8 @@ class TextPlane {
     void show_cursor() {
         ncplane_move_above(cursor_plane_ptr, plane_ptr);
     }
+
+  private:
 };
 
 struct CommandPalettePlane {
@@ -795,7 +895,7 @@ struct CommandPalettePlane {
     // then the only way to access this is via the
     // prompt state
 
-    PromptPlaneModel prompt_plane_model;
+    BottomPlaneModel prompt_plane_model;
 
     ncplane *plane_ptr;
     ncplane *cursor_ptr;
@@ -808,7 +908,7 @@ struct CommandPalettePlane {
           has_notif(false) {
     }
 
-    void set_model(PromptPlaneModel ppm) {
+    void set_model(BottomPlaneModel ppm) {
         prompt_plane_model = ppm;
     }
 
@@ -897,10 +997,6 @@ struct CommandPalettePlane {
         has_notif = false;
     }
 
-    bool has_notification() {
-        return has_notif;
-    }
-
     void render_cmd() {
         ncplane_erase(plane_ptr);
         // first we putstr the prompt
@@ -927,6 +1023,7 @@ struct CommandPalettePlane {
     void show_cursor() {
         ncplane_move_above(cursor_ptr, plane_ptr);
     }
+
     void hide_cursor() {
         ncplane_move_below(cursor_ptr, plane_ptr);
     }
@@ -938,99 +1035,161 @@ struct CommandPalettePlane {
     }
 };
 
+struct BottomPane {
+    NCPlane cmd_plane; // for both cmds and notifs
+    NCPlane status_pane;
+
+    // parent is cmd_plane
+    NCPlane cmd_cursor_plane;
+
+    bool has_notif = false;
+
+    BottomPlaneModel bpm;
+
+    BottomPane(NCPlane &base_plane, [[maybe_unused]] int y,
+               [[maybe_unused]] int x, [[maybe_unused]] unsigned height,
+               unsigned width)
+        : cmd_plane(base_plane, y, 0, 1, 3 * width / 4, "cmd_plane"),
+          status_pane(base_plane, y, 3 * width / 4, 1,
+                      width - cmd_plane.width(), "status"),
+          cmd_cursor_plane(cmd_plane, 0, 0, 1, 1, "cmd cursor") {
+
+        nccell cmd_palette_base_cell = {
+            .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 102, 153, 153)};
+        ncplane_set_base_cell(cmd_plane.get(), &cmd_palette_base_cell);
+        ncplane_set_base_cell(status_pane.get(), &cmd_palette_base_cell);
+
+        nccell cursor_base_cell = {
+            .channels = NCCHANNELS_INITIALIZER(0, 0, 0, 255, 255, 255)};
+        ncplane_set_base_cell(cmd_cursor_plane.get(), &cursor_base_cell);
+    }
+
+    void set_model(BottomPlaneModel to_set) {
+        bpm = to_set;
+    }
+
+    void render_status() {
+        // TODO:
+        ncplane_putstr(status_pane.get(), "status pane: ");
+    }
+
+    void render_cmd() {
+        ncplane_erase(cmd_plane.get());
+        // first we putstr the prompt
+        if (!bpm.get_prompt_str().empty()) {
+            ncplane_putstr_yx(cmd_plane.get(), 0, 0,
+                              bpm.get_prompt_str().data());
+            // and style it
+            ncplane_stain(
+                cmd_plane.get(), 0, 0, 1,
+                (unsigned int)bpm.get_prompt_str().size(),
+                BG_INITIALIZER(105, 105, 105), BG_INITIALIZER(105, 105, 105),
+                BG_INITIALIZER(105, 105, 105), BG_INITIALIZER(105, 105, 105));
+        }
+        if (!bpm.get_cmd_buf().empty()) {
+            ncplane_putstr(cmd_plane.get(), bpm.get_cmd_buf().data());
+        }
+
+        // TODO: fix this logic in the case of long cmd strings
+        ncplane_move_yx(cmd_cursor_plane.get(), 0,
+                        (int)(bpm.get_cursor() + bpm.get_prompt_str().size()));
+    }
+
+    // overwrite cmd pane
+    void notify(std::string_view notif) {
+        has_notif = true;
+        ncplane_erase(cmd_plane.get());
+        if (!notif.empty()) {
+            ncplane_putstr_yx(cmd_plane.get(), 0, 0, notif.data());
+            // and style it
+            ncplane_stain(
+                cmd_plane.get(), 0, 0, 1, (unsigned int)notif.size(),
+                BG_INITIALIZER(102, 102, 153), BG_INITIALIZER(102, 102, 153),
+                BG_INITIALIZER(102, 102, 153), BG_INITIALIZER(102, 102, 153));
+        }
+    }
+
+    void show_cursor() {
+        ncplane_move_above(cmd_cursor_plane.get(), cmd_plane.get());
+    }
+
+    void hide_cursor() {
+        ncplane_move_below(cmd_cursor_plane.get(), cmd_plane.get());
+    }
+};
+
+struct MainPane {
+    NCPlane main_plane;
+    std::vector<TextPlane> text_planes;
+    size_t active_idx;
+
+    MainPane(NCPlane &base_plane, int y, int x, unsigned height, unsigned width)
+        : main_plane(base_plane, y, x, height, width, "main pane"),
+          active_idx(0) {
+    }
+
+    TextPlane *add_text_plane(TextPlaneModel tpm) {
+        text_planes.emplace_back(main_plane.get(), tpm, main_plane.height(),
+                                 main_plane.width());
+        active_idx = text_planes.size() - 1;
+        return &text_planes.back();
+    }
+
+    void hide_cursor() {
+        text_planes.at(active_idx).hide_cursor();
+    }
+
+    void show_cursor() {
+        text_planes.at(active_idx).show_cursor();
+    }
+};
+
 class View {
 
   private:
     notcurses *nc_ptr;
     std::vector<TextPlane> text_plane_list;
     size_t active_text_plane_idx;
-    CommandPalettePlane cmd_plane;
 
-    View() {
-    }
-
-    View(notcurses *nc)
-        : nc_ptr(nc),
-          active_text_plane_idx(0) {
-        unsigned int y, x;
-        ncplane_dim_yx(notcurses_stdplane(nc), &y, &x);
-        cmd_plane.initialise(notcurses_stdplane(nc), (int)y - 1, 0, x);
-    }
+    // new stuff
+    NCPlane ncplane;
+    MainPane main_pane;
+    BottomPane bottom_pane;
 
   public:
-    View(View const &) = delete;
-    View &operator=(View const &) = delete;
-    View(View &&other)
-        : nc_ptr(std::exchange(other.nc_ptr, nullptr)),
-          text_plane_list(std::move(other.text_plane_list)),
-          active_text_plane_idx(other.active_text_plane_idx),
-          cmd_plane(std::move(other.cmd_plane)) {
+    View(notcurses *nc, unsigned height, unsigned width)
+        : nc_ptr(nc),
+          ncplane(notcurses_stdplane(nc), 0, 0, height, width, "viewbaseplane"),
+          main_pane(ncplane, 0, 0, height - 1, width),
+          bottom_pane(ncplane, (int)height - 1, 0, 1, width) {
     }
 
-    View &operator=(View &&other) {
-        View temp{std::move(other)};
-        swap(*this, temp);
-        return *this;
-    }
+    View(View const &) = delete;
+    View &operator=(View const &) = delete;
+    View(View &&other) = delete;
+    View &operator=(View &&other) = delete;
     ~View() {
         notcurses_stop(nc_ptr);
     }
 
-    friend void swap(View &a, View &b) {
-        using std::swap;
-        swap(a.nc_ptr, b.nc_ptr);
-        swap(a.cmd_plane, b.cmd_plane);
+    TextPlane *create_text_plane(TextPlaneModel tpm) {
+        return main_pane.add_text_plane(tpm);
     }
 
-    size_t create_text_plane(TextPlaneModel tpm) {
-        // TODO: for now it all ties to base plane
-        unsigned y, x;
-        ncplane_dim_yx(notcurses_stdplane(nc_ptr), &y, &x);
-        text_plane_list.emplace_back(notcurses_stdplane(nc_ptr), tpm, y - 1, x);
-        return text_plane_list.size() - 1; // the pd is literally the index
-    }
-
-    void set_prompt_plane(PromptPlaneModel ppm) {
-        cmd_plane.set_model(ppm);
-    }
-
-    WrapStatus get_wrap_status(size_t plane_fd) const {
-        return text_plane_list.at(plane_fd).get_wrap_status();
-    }
-
-    static View &init_view() {
-        // notcurses init
-        static struct notcurses_options nc_options = {
-            // .loglevel = NCLOGLEVEL_INFO,
-            .flags = NCOPTION_SUPPRESS_BANNERS | NCOPTION_PRESERVE_CURSOR,
-        };
-        notcurses *nc_ptr = notcurses_init(&nc_options, nullptr);
-        // disable the conversion into the signal
-        notcurses_linesigs_disable(nc_ptr);
-
-        // now create the UI elements
-        static View view(nc_ptr);
-        return view;
-    }
-
-    void render_text() {
-        text_plane_list.at(active_text_plane_idx).render();
-        notcurses_render(nc_ptr);
-    }
-
-    void render_cmd() {
-        cmd_plane.render();
-        notcurses_render(nc_ptr);
+    void set_prompt_plane(BottomPlaneModel bpm) {
+        bottom_pane.set_model(bpm);
     }
 
     void render_status() {
-        cmd_plane.render();
-        notcurses_render(nc_ptr);
+        bottom_pane.render_status();
+    }
+
+    void render_cmd() {
+        bottom_pane.render_cmd();
     }
 
     void notify(std::string_view notif) {
-        cmd_plane.hide_cursor();
-        cmd_plane.notify(notif);
+        bottom_pane.notify(notif);
     }
 
     notcurses *get_nc_ptr() const {
@@ -1043,10 +1202,6 @@ class View {
         return nc_input;
     }
 
-    void chase_point(Point p) {
-        text_plane_list.at(active_text_plane_idx).chase_point(p);
-    }
-
     // Helper methods
     std::pair<unsigned int, unsigned int>
     get_text_plane_dim(size_t plane_descriptor) {
@@ -1055,22 +1210,22 @@ class View {
         return {y, x};
     }
 
-    void clear_cmd() {
-        cmd_plane.clear();
-    }
-
     // TODO: refactor the focus methods
     void focus_cmd() {
-        text_plane_list.at(active_text_plane_idx).hide_cursor();
-        cmd_plane.show_cursor();
+        main_pane.hide_cursor();
+        bottom_pane.show_cursor();
     }
 
     void focus_text() {
-        cmd_plane.hide_cursor();
-        text_plane_list.at(active_text_plane_idx).show_cursor();
+        main_pane.show_cursor();
+        bottom_pane.hide_cursor();
     }
 
     std::vector<std::pair<Point, Point>> const &get_active_line_points() {
         return text_plane_list.at(active_text_plane_idx).line_points;
+    }
+
+    void refresh_screen() {
+        notcurses_render(nc_ptr);
     }
 };

@@ -251,8 +251,8 @@ class PromptState : public ProgramState {
         target_str = target;
     }
 
-    PromptPlaneModel get_prompt_plane_model() {
-        return PromptPlaneModel{&prompt_str, &cursor, &cmd_buf};
+    BottomPlaneModel get_prompt_plane_model() {
+        return BottomPlaneModel{&prompt_str, &cursor, &cmd_buf};
     }
 
     StateReturn handle_input(ncinput nc_input) {
@@ -631,7 +631,8 @@ class TextState : public ProgramState {
     Cursor text_cursor;
     std::optional<Cursor> maybe_anchor_point;
     std::vector<std::string> clipboard;
-    size_t plane_fd;
+    TextPlane
+        *text_plane_ptr; // how do i retrigger a reparse without giving an fd?
 
     // objects used for parsing
     std::optional<Parser<TextBuffer>> maybe_parser;
@@ -654,7 +655,8 @@ class TextState : public ProgramState {
             view_ptr->notify(file.get_errmsg());
         }
         // do a non-creating open
-        plane_fd = view_ptr->create_text_plane(this->get_text_plane_model());
+        text_plane_ptr =
+            view_ptr->create_text_plane(this->get_text_plane_model());
     }
     ~TextState() {
     }
@@ -692,7 +694,7 @@ class TextState : public ProgramState {
 
     void trigger_render() {
         view_ptr->focus_text();
-        view_ptr->render_text();
+        text_plane_ptr->render();
     }
 
     StateReturn handle_input(ncinput nc_input) {
@@ -737,7 +739,7 @@ class TextState : public ProgramState {
                          update_new_end_point, start_byte, old_end_byte,
                          new_end_byte);
 
-            view_ptr->chase_point(text_cursor);
+            text_plane_ptr->chase_point(text_cursor);
             return StateReturn();
         }
 
@@ -787,7 +789,7 @@ class TextState : public ProgramState {
                              update_new_end_point, start_byte, old_end_byte,
                              new_end_byte);
             }
-            view_ptr->chase_point(text_cursor);
+            text_plane_ptr->chase_point(text_cursor);
             return StateReturn();
         }
 
@@ -828,7 +830,8 @@ class TextState : public ProgramState {
             reparse_text(update_start_point, update_old_end_point,
                          update_new_end_point, start_byte, old_end_byte,
                          new_end_byte);
-            view_ptr->chase_point(text_cursor);
+
+            text_plane_ptr->chase_point(text_cursor);
             return StateReturn();
         }
 
@@ -873,7 +876,8 @@ class TextState : public ProgramState {
                              update_start_point, start_byte, old_end_byte,
                              start_byte);
             }
-            view_ptr->chase_point(text_cursor);
+
+            text_plane_ptr->chase_point(text_cursor);
             return StateReturn();
         }
 
@@ -917,7 +921,8 @@ class TextState : public ProgramState {
         } else {
             text_cursor = move_cursor_left(text_cursor);
         }
-        view_ptr->chase_point(text_cursor);
+        text_plane_ptr->chase_point(text_cursor);
+
         return StateReturn();
     }
     StateReturn RIGHT_ARROW_HANDLER() {
@@ -927,7 +932,8 @@ class TextState : public ProgramState {
         } else {
             text_cursor = move_cursor_right(text_cursor);
         }
-        view_ptr->chase_point(text_cursor);
+        text_plane_ptr->chase_point(text_cursor);
+
         return StateReturn();
     }
     StateReturn UP_ARROW_HANDLER() {
@@ -936,7 +942,8 @@ class TextState : public ProgramState {
             maybe_anchor_point.reset();
         }
         text_cursor = move_cursor_up(text_cursor);
-        view_ptr->chase_point(text_cursor);
+        text_plane_ptr->chase_point(text_cursor);
+
         return StateReturn();
     }
     StateReturn DOWN_ARROW_HANDLER() {
@@ -945,7 +952,8 @@ class TextState : public ProgramState {
             maybe_anchor_point.reset();
         }
         text_cursor = move_cursor_down(text_cursor);
-        view_ptr->chase_point(text_cursor);
+        text_plane_ptr->chase_point(text_cursor);
+
         return StateReturn();
     }
 
@@ -955,7 +963,7 @@ class TextState : public ProgramState {
         }
 
         text_cursor = move_cursor_left(text_cursor);
-        view_ptr->chase_point(text_cursor);
+        text_plane_ptr->chase_point(text_cursor);
 
         assert(maybe_anchor_point);
         if (*maybe_anchor_point == text_cursor) {
@@ -969,7 +977,7 @@ class TextState : public ProgramState {
         }
 
         text_cursor = move_cursor_right(text_cursor);
-        view_ptr->chase_point(text_cursor);
+        text_plane_ptr->chase_point(text_cursor);
 
         assert(maybe_anchor_point);
         if (*maybe_anchor_point == text_cursor) {
@@ -983,7 +991,7 @@ class TextState : public ProgramState {
         }
 
         text_cursor = move_cursor_up(text_cursor);
-        view_ptr->chase_point(text_cursor);
+        text_plane_ptr->chase_point(text_cursor);
 
         assert(maybe_anchor_point);
         if (*maybe_anchor_point == text_cursor) {
@@ -997,7 +1005,7 @@ class TextState : public ProgramState {
         }
 
         text_cursor = move_cursor_down(text_cursor);
-        view_ptr->chase_point(text_cursor);
+        text_plane_ptr->chase_point(text_cursor);
 
         assert(maybe_anchor_point);
         if (*maybe_anchor_point == text_cursor) {
@@ -1024,7 +1032,7 @@ class TextState : public ProgramState {
             text_buffer.remove_text_at(lp, rp);
             text_cursor = lp;
             maybe_anchor_point.reset();
-            view_ptr->chase_point(lp);
+            text_plane_ptr->chase_point(lp);
         } else {
             // for now do nothing
         }
@@ -1041,11 +1049,12 @@ class TextState : public ProgramState {
             auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
             text_buffer.remove_text_at(lp, rp);
             text_cursor = lp;
-            view_ptr->chase_point(text_cursor);
+            text_plane_ptr->chase_point(text_cursor);
         }
         text_cursor = text_buffer.insert_text_at(text_cursor, clipboard);
         maybe_anchor_point.reset();
-        view_ptr->chase_point(text_cursor);
+        text_plane_ptr->chase_point(text_cursor);
+
         return StateReturn();
     }
 
@@ -1059,11 +1068,12 @@ class TextState : public ProgramState {
             auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
             text_buffer.remove_text_at(lp, rp);
             text_cursor = lp;
-            view_ptr->chase_point(text_cursor);
+            text_plane_ptr->chase_point(text_cursor);
         }
         text_cursor = text_buffer.insert_text_at(text_cursor, clipboard);
         maybe_anchor_point.reset();
-        view_ptr->chase_point(text_cursor);
+        text_plane_ptr->chase_point(text_cursor);
+
         return StateReturn();
     }
 
@@ -1113,14 +1123,14 @@ class TextState : public ProgramState {
 
     Cursor move_cursor_up(Cursor const &p) const {
         Cursor to_return = p;
-        if (view_ptr->get_wrap_status(plane_fd) == WrapStatus::NOWRAP) {
+        if (text_plane_ptr->get_wrap_status() == WrapStatus::NOWRAP) {
             // non-wrapping movement
             to_return.col =
                 std::min(to_return.col, text_buffer.at(--to_return.row).size());
             return to_return;
         }
 
-        auto [num_rows, num_cols] = view_ptr->get_text_plane_dim(plane_fd);
+        auto [num_rows, num_cols] = text_plane_ptr->get_plane_yx_dim();
         // first is col, second is effective width
 
         // returns the point moved up on the line
@@ -1146,7 +1156,7 @@ class TextState : public ProgramState {
     Cursor move_cursor_down(Cursor const &p) const {
         Cursor to_return = p;
 
-        if (view_ptr->get_wrap_status(plane_fd) == WrapStatus::NOWRAP) {
+        if (text_plane_ptr->get_wrap_status() == WrapStatus::NOWRAP) {
             // non-wrapping movement
             if (to_return.row + 1 < text_buffer.num_lines()) {
                 ++to_return.row;
@@ -1156,7 +1166,7 @@ class TextState : public ProgramState {
             return to_return;
         }
 
-        auto [num_rows, num_cols] = view_ptr->get_text_plane_dim(plane_fd);
+        auto [num_rows, num_cols] = text_plane_ptr->get_plane_yx_dim();
 
         std::optional<Cursor> maybe_down_point = StringUtils::maybe_down_point(
             text_buffer.at(to_return.row), to_return, num_cols);
@@ -1273,8 +1283,9 @@ struct Program {
     View view;
     EventQueue event_queue;
 
-    Program(std::optional<std::string_view> maybe_filename)
-        : view(std::move(View::init_view())),
+    Program(std::optional<std::string_view> maybe_filename, notcurses *nc,
+            unsigned height, unsigned width)
+        : view(nc, height, width),
           event_queue(view.get_nc_ptr()) {
 
         // This is still plenty ugly.
@@ -1287,15 +1298,12 @@ struct Program {
 
     void run_event_loop() {
         assert(!state_stack.empty());
-
-        // if no notification render status?
-        view.render_text();
-
         state_stack.active_state()->enter();
         while (!state_stack.empty()) {
 
             view.render_status();
             state_stack.active_state()->trigger_render();
+            view.refresh_screen();
             Event ev = event_queue.get_event();
 
             // for now handle quitting here

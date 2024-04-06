@@ -10,7 +10,7 @@ yate: yate.o
 	$(CXX) yate.o -o yate $(LDFLAGS)
 
 debug: yate.o
-	$(CXX) -g yate.o -o yate $(LDFLAGS)
+	$(CXX) -g yate.o -o debug $(LDFLAGS)
 
 test: test.o $(TS_OBJS)
 	$(CXX) -g  test.o -o test $(LDFLAGS)
@@ -18,11 +18,18 @@ test: test.o $(TS_OBJS)
 test.o: test.cpp text_buffer.h view.h util.h File.h Program.h
 	$(CXX) -g -c $(CXXFLAGS) -o test.o test.cpp
 
+debug.o: main.cpp text_buffer.h view.h util.h File.h Program.h
+	$(CXX) -fsanitize=address -g yate.o -o yate $(LDFLAGS)
+
+
 yate.o : main.cpp text_buffer.h view.h util.h File.h Program.h
 	$(CXX) -c $(CXXFLAGS) -o yate.o main.cpp
 
 $(TS_OBJS): %.o: %.c
 	$(CC) -c $(CFLAGS) $< -o $@ $(CFLAGS) 
+
+clean:
+	rm -f *.o
 
 print: ; $(info $$var is [${TS_OBJS}])echo Hello world
 

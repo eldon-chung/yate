@@ -1,4 +1,5 @@
 #include "Program.h"
+#include <notcurses/notcurses.h>
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
@@ -8,8 +9,18 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         maybe_filename = argv[1];
     }
 
+    static struct notcurses_options nc_options = {
+        // .loglevel = NCLOGLEVEL_INFO,
+        .flags = NCOPTION_SUPPRESS_BANNERS | NCOPTION_PRESERVE_CURSOR,
+    };
+    notcurses *nc = notcurses_init(&nc_options, nullptr);
+    unsigned int y, x;
+    ncplane_dim_yx(notcurses_stdplane(nc), &y, &x);
+    // disable the conversion into the signal
+    notcurses_linesigs_disable(nc);
+
     // set up initial state
-    Program program_state(maybe_filename);
+    Program program_state(maybe_filename, nc, y, x);
     program_state.run_event_loop();
     return 0;
 }
