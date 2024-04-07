@@ -1,6 +1,7 @@
 #pragma once
 
 #include <assert.h>
+#include <bits/types/wint_t.h>
 #include <cstdio>
 #include <deque>
 #include <signal.h>
@@ -439,24 +440,15 @@ class TextPlane {
 
         // gives the index into line_points
         auto find_visual_row_containing_point = [&](Point p) -> size_t {
-            size_t low = 0;
-            size_t high = line_points.size();
-            while (low + 1 < high) {
-                size_t mid = (high - low) / 2 + low;
-
-                if (line_points[mid].first <= p &&
-                    p <= line_points[mid].second) {
-                    low = mid;
-                    break;
+            size_t row_idx = 0;
+            while (row_idx < line_points.size()) {
+                if (line_points[row_idx].first <= p &&
+                    p <= line_points[row_idx].second) {
+                    return row_idx;
                 }
-
-                if (p < line_points[mid].second) {
-                    high = mid;
-                } else {
-                    low = mid;
-                }
+                ++row_idx;
             }
-            return low;
+            return row_idx;
         };
 
         // need this for base colour things
@@ -500,47 +492,57 @@ class TextPlane {
             }
         };
 
-        // need to assert that the range intersects the screen
-        assert(range_end >= line_points.front().first &&
-               range_start < line_points.back().second);
+        auto col_to_width = [this](size_t row, size_t col) -> size_t {
+            assert(col <= model.at(row).size());
+            size_t width = 0;
+            for (size_t c = 0; c < col; ++c) {
+                width += StringUtils::symbol_into_width(model.at(row)[c]);
+            }
+            return width;
+        };
 
         // clamp the points if you must
         range_start = std::max(range_start, line_points.front().first);
         range_end =
             std::min(range_end, line_points.back().second); // this is exclusive
 
+        // need to assert that the range intersects the screen
+        assert(range_end >= line_points.front().first &&
+               range_start < line_points.back().second);
+
         size_t starting_visual_row =
             find_visual_row_containing_point(range_start);
         size_t ending_visual_row = find_visual_row_containing_point(range_end);
 
+        assert(starting_visual_row <= ending_visual_row);
         if (starting_visual_row == ending_visual_row) {
-            int starting_x =
-                (int)(range_start.col -
-                      line_points.at(starting_visual_row).first.col);
-            int x_len = (int)(range_end.col - range_start.col);
-            apply_style(starting_visual_row, (size_t)starting_x, 1,
-                        (unsigned int)x_len, highlight);
+            size_t starting_col =
+                col_to_width(range_start.row, range_start.col);
+            size_t ending_col = col_to_width(range_start.row, range_end.col);
+            apply_style(starting_visual_row, starting_col, 1,
+                        ending_col - starting_col, highlight);
             return;
         }
 
-        // colour the first and last row
-        int starting_x = (int)(range_start.col -
-                               line_points.at(starting_visual_row).first.col);
-        int x_len = (int)(line_points.at(starting_visual_row).second.col -
-                          (size_t)starting_x);
-
-        apply_style(starting_visual_row, (size_t)starting_x, 1,
-                    (unsigned int)x_len, highlight);
-
-        size_t ending_visual_col =
-            range_end.col - line_points[ending_visual_row].first.col;
-        apply_style(ending_visual_row, 0, 1, ending_visual_col, highlight);
-
-        auto [num_rows, num_cols] = get_plane_yx_dim();
-        // colour all rows in between
-        for (size_t row_idx = starting_visual_row + 1;
-             row_idx < ending_visual_row; ++row_idx) {
-            apply_style(row_idx, 0, 1, num_cols, highlight);
+        {
+            size_t starting_col =
+                col_to_width(range_start.row, range_start.col);
+            size_t ending_col = StringUtils::var_width_str_into_effective_width(
+                model.at(range_start.row));
+            apply_style(starting_visual_row, starting_col, 1,
+                        ending_col - starting_col, highlight);
+        }
+        {
+            size_t ending_col = col_to_width(range_end.row, range_end.col);
+            apply_style(ending_visual_row, 0, 1, ending_col, highlight);
+        }
+        {
+            for (size_t row = starting_visual_row + 1; row < ending_visual_row;
+                 ++row) {
+                size_t length = StringUtils::var_width_str_into_effective_width(
+                    model.at(row));
+                apply_style(row, 0, 1, length, highlight);
+            }
         }
     }
 

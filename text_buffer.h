@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <cstddef>
+#include <cstdio>
 #include <optional>
 #include <stdlib.h>
 
@@ -332,11 +333,35 @@ class LineSizeTree {
 
     void set_position_size(size_t position, size_t new_size) {
         assert(position <= size());
-
-        if (position < size()) {
-            remove_position(position);
+        if (position == size()) {
+            insert_before_position(position, new_size);
+            return;
+        } else {
+            update_position_value(position, new_size);
         }
-        insert_before_position(position, new_size);
+    }
+
+    void update_position_value(size_t position, size_t line_size) {
+        update_position_value(root_node, position, line_size);
+    }
+
+    void update_position_value(Node *curr_node, size_t position,
+                               size_t line_size) {
+        assert(curr_node);
+        if (position == curr_node->left_size()) {
+            curr_node->line_size = line_size;
+            curr_node->update_values();
+            return;
+        }
+
+        if (position < curr_node->left_size()) {
+            update_position_value(curr_node->left_node, position, line_size);
+        } else {
+            update_position_value(curr_node->right_node,
+                                  position - curr_node->left_size() - 1,
+                                  line_size);
+        }
+        curr_node->update_values();
     }
 
     void insert_before_position(size_t position, size_t line_size) {
@@ -369,13 +394,52 @@ class LineSizeTree {
     }
 
     size_t byte_offset_at_line(size_t line) const {
-        if (!root_node) {
-            return 0;
-        }
+        assert(root_node);
         assert(line < size());
-        Node *node = get_node_at_position(root_node, line);
-        assert(node);
-        return node->left_total_line_size();
+        return byte_offset_at_line(root_node, line);
+    }
+
+    static size_t byte_offset_at_line(Node const *curr_node, size_t line) {
+        assert(curr_node);
+        if (curr_node->left_size() == line) {
+            return curr_node->left_total_line_size();
+        }
+
+        if (line < curr_node->left_size()) {
+            return byte_offset_at_line(curr_node->left_node, line);
+        } else {
+            return byte_offset_at_line(curr_node->right_node,
+                                       line - 1 - curr_node->left_size()) +
+                   curr_node->line_size + curr_node->left_total_line_size();
+        }
+    }
+
+    size_t total_size() const {
+        return root_node->total_line_size;
+    }
+
+    size_t line_containing_offset(size_t byte_offset) const {
+        assert(byte_offset <= root_node->total_line_size);
+        return line_containing_offset(root_node, byte_offset);
+    }
+
+    static size_t line_containing_offset(Node *curr_node, size_t byte_offset) {
+        assert(curr_node);
+
+        if (byte_offset < curr_node->left_total_line_size()) {
+            return line_containing_offset(curr_node->left_node, byte_offset);
+        }
+
+        if (byte_offset <
+            curr_node->left_total_line_size() + curr_node->line_size) {
+            return curr_node->left_size();
+        }
+
+        return curr_node->left_size() + 1 +
+               line_containing_offset(curr_node->right_node,
+                                      byte_offset -
+                                          (curr_node->left_total_line_size() +
+                                           curr_node->line_size));
     }
 
   private:
@@ -543,16 +607,17 @@ struct TextBuffer {
         return starting_byte_offset.byte_offset_at_line(point.row) + point.col;
     }
 
+    size_t total_bytes() const {
+        return starting_byte_offset.total_size();
+    }
+
     void load_contents(std::string_view contents) {
         buffer.clear();
 
-        size_t running_offset = 0;
         size_t num_lines = 0;
         starting_byte_offset.clear();
         while (true) {
             size_t newl_pos = contents.find('\n');
-            starting_byte_offset.insert_before_position(num_lines,
-                                                        running_offset);
             buffer.push_back(std::string{contents.substr(0, newl_pos)});
 
             if (newl_pos == std::string::npos) {
@@ -561,14 +626,27 @@ struct TextBuffer {
 
             contents = contents.substr(newl_pos + 1);
             ++num_lines;
-            running_offset += newl_pos + 1;
+        }
+
+        for (size_t idx = 0; idx < buffer.size(); ++idx) {
+            starting_byte_offset.insert_before_position(idx,
+                                                        actual_line_size(idx));
+        }
+    }
+
+    size_t actual_line_size(size_t row) {
+        assert(row < buffer.size());
+        if (row == buffer.size() - 1) {
+            return buffer[row].size();
+        } else {
+            return buffer[row].size() + 1;
         }
     }
 
     void insert_char_at(Cursor cursor, char c) {
         buffer.at(cursor.row).insert(cursor.col++, 1, c);
         starting_byte_offset.set_position_size(cursor.row,
-                                               buffer.at(cursor.row).size());
+                                               actual_line_size(cursor.row));
     }
 
     void insert_newline_at(Cursor cursor) {
@@ -576,42 +654,41 @@ struct TextBuffer {
         buffer.at(cursor.row).resize(cursor.col);
         buffer.insert(buffer.begin() + (long)cursor.row + 1,
                       std::move(next_line));
-        starting_byte_offset.set_position_size(cursor.row,
-                                               buffer.at(cursor.row).size());
+
+        starting_byte_offset.insert_before_position(
+            cursor.row, actual_line_size(cursor.row));
+
         starting_byte_offset.set_position_size(
-            cursor.row + 1, buffer.at(cursor.row + 1).size());
+            cursor.row + 1, actual_line_size(cursor.row + 1));
     }
 
     void insert_backspace_at(Cursor cursor) {
-
         if (cursor.col > 0) {
             buffer.at(cursor.row).erase(--cursor.col, 1);
             starting_byte_offset.set_position_size(
-                cursor.row, buffer.at(cursor.row).size());
+                cursor.row, actual_line_size(cursor.row));
         } else if (cursor.row > 0) {
             assert(cursor.col == 0);
             cursor.col = buffer.at(--cursor.row).length();
             buffer.at(cursor.row).append(buffer.at(cursor.row + 1));
             buffer.erase(buffer.begin() + (long)cursor.row + 1);
-
             starting_byte_offset.set_position_size(
-                cursor.row, buffer.at(cursor.row).size());
+                cursor.row, actual_line_size(cursor.row));
+            starting_byte_offset.remove_position(cursor.row + 1);
         }
     }
 
     void insert_delete_at(Cursor cursor) {
         if (cursor.col < buffer.at(cursor.row).size()) {
             buffer.at(cursor.row).erase(cursor.col, 1);
-
             starting_byte_offset.set_position_size(
-                cursor.row, buffer.at(cursor.row).size());
-
+                cursor.row, actual_line_size(cursor.row));
         } else if (cursor.row + 1 < buffer.size()) {
             assert(cursor.col == buffer.at(cursor.row).size());
             buffer.at(cursor.row) += buffer.at(cursor.row + 1);
             buffer.erase(buffer.begin() + (long)cursor.row + 1);
             starting_byte_offset.set_position_size(
-                cursor.row, buffer.at(cursor.row).size());
+                cursor.row, actual_line_size(cursor.row));
 
             // remove the next line's size too
             starting_byte_offset.remove_position(cursor.row + 1);
@@ -631,8 +708,8 @@ struct TextBuffer {
         return to_ret;
     }
 
-    std::string_view at(size_t starting_row) const {
-        return buffer.at(starting_row);
+    std::string_view at(size_t row) const {
+        return buffer.at(row);
     }
 
     size_t num_lines() const {
@@ -691,7 +768,7 @@ struct TextBuffer {
             buffer.at(lp.row).append(std::move(right_half));
 
             starting_byte_offset.set_position_size(lp.row,
-                                                   buffer.at(lp.row).size());
+                                                   actual_line_size(lp.row));
             return;
         }
 
@@ -702,14 +779,14 @@ struct TextBuffer {
 
         buffer.erase(buffer.begin() + (ssize_t)lp.row + 1,
                      buffer.begin() + (ssize_t)rp.row);
+
         starting_byte_offset.set_position_size(lp.row,
-                                               buffer.at(lp.row).size());
+                                               actual_line_size(lp.row));
 
         starting_byte_offset.set_position_size(rp.row,
-                                               buffer.at(lp.row + 1).size());
-        for (size_t r_pos = rp.row - 1; r_pos > lp.row; --r_pos) {
-
-            starting_byte_offset.remove_position(r_pos);
+                                               actual_line_size(lp.row + 1));
+        for (size_t mid_pos = rp.row - 1; mid_pos > lp.row; --mid_pos) {
+            starting_byte_offset.remove_position(mid_pos);
         }
 
         // then delete one more line?
@@ -726,7 +803,7 @@ struct TextBuffer {
             buffer.at(point.row).append(lines.front());
             buffer.at(point.row).append(right_half);
             starting_byte_offset.set_position_size(point.row,
-                                                   buffer.at(point.row).size());
+                                                   actual_line_size(point.row));
             size_t effective_width_offset =
                 StringUtils::var_width_str_into_effective_width(lines.front());
             return {point.row, point.col + lines.front().size(),
@@ -749,9 +826,8 @@ struct TextBuffer {
         for (size_t to_update = point.row;
              to_update <= final_insertion_point.row; ++to_update) {
             starting_byte_offset.set_position_size(to_update,
-                                                   buffer.at(to_update).size());
+                                                   actual_line_size(to_update));
         }
-
         return final_insertion_point;
     }
 
@@ -781,36 +857,46 @@ struct TextBuffer {
 inline const char *read_text_buffer(void *payload,
                                     [[maybe_unused]] uint32_t byte_offset,
                                     TSPoint position, uint32_t *bytes_read) {
-    // fprintf(stderr, "requested position: %u, %u\n", position.row,
-    //         position.column);
-
+    static size_t op_idx = 1;
     TextBuffer *text_buffer_ptr = (TextBuffer *)payload;
-    // I'm guessing I only need to use either of the 2?
 
-    if (position.row >= text_buffer_ptr->num_lines() ||
-        (position.row == text_buffer_ptr->num_lines() - 1 &&
-         position.column >=
-             text_buffer_ptr->get_nth_line(position.row).size())) {
-        // fprintf(stderr, "returning EOF\n");
+    if (byte_offset == text_buffer_ptr->total_bytes()) {
         *bytes_read = 0;
         return "\0";
     }
 
-    if (position.column == text_buffer_ptr->at(position.row).size()) {
-        // this __should__ be safe because it should point to somewhere in
-        // globals, rather than point to stack
-        // fprintf(stderr, "returning newline\n");
-        *bytes_read = 1;
-        return "\n";
+    size_t line_idx =
+        text_buffer_ptr->starting_byte_offset.line_containing_offset(
+            byte_offset);
+
+    assert(line_idx <= text_buffer_ptr->num_lines());
+
+    if (line_idx == text_buffer_ptr->num_lines()) {
+        *bytes_read = 0;
+        return "\0";
     }
 
-    assert(position.column < text_buffer_ptr->at(position.row).size());
-    const char *corresponding_byte = text_buffer_ptr->at(position.row).data();
-    corresponding_byte += position.column;
-    *bytes_read =
-        (uint32_t)text_buffer_ptr->at(position.row).size() - position.column;
-    // fprintf(stderr, "giving str: %s\n", corresponding_byte);
-    // fprintf(stderr, "bytes read: %u\n", *bytes_read);
+    // get the byte offset at that line as well
+    size_t line_start_offset =
+        text_buffer_ptr->starting_byte_offset.byte_offset_at_line(line_idx);
 
-    return corresponding_byte;
+    assert(line_start_offset <= byte_offset);
+
+    size_t line_offset = byte_offset - line_start_offset;
+    assert(line_offset <= text_buffer_ptr->at(line_idx).size());
+
+    if (line_offset == text_buffer_ptr->at(line_idx).size()) {
+        if (line_idx < text_buffer_ptr->num_lines() - 1) {
+            *bytes_read = 1;
+            return "\n";
+        } else {
+            *bytes_read = 0;
+            return "\0";
+        }
+    } else {
+        *bytes_read = text_buffer_ptr->at(line_idx).size() - line_offset;
+        std::string_view debug =
+            text_buffer_ptr->at(line_idx).substr(line_offset);
+        return text_buffer_ptr->at(line_idx).data() + line_offset;
+    }
 }

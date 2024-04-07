@@ -855,7 +855,6 @@ class TextState : public ProgramState {
         }
 
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_DEL) {
-
             if (maybe_anchor_point) {
                 auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
 

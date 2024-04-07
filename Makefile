@@ -9,8 +9,8 @@ LDFLAGS := -lnotcurses  -lnotcurses-core -lunistring -lm -ltinfo -ltree-sitter
 yate: yate.o
 	$(CXX) yate.o -o yate $(LDFLAGS)
 
-debug: yate.o
-	$(CXX) -g yate.o -o debug $(LDFLAGS)
+debug: debug.o
+	$(CXX) -g debug.o -o debug $(LDFLAGS)
 
 test: test.o $(TS_OBJS)
 	$(CXX) -g  test.o -o test $(LDFLAGS)
@@ -19,7 +19,7 @@ test.o: test.cpp text_buffer.h view.h util.h File.h Program.h
 	$(CXX) -g -c $(CXXFLAGS) -o test.o test.cpp
 
 debug.o: main.cpp text_buffer.h view.h util.h File.h Program.h
-	$(CXX) -fsanitize=address -g yate.o -o yate $(LDFLAGS)
+	$(CXX) -c $(CXXFLAGS) -o debug.o main.cpp
 
 
 yate.o : main.cpp text_buffer.h view.h util.h File.h Program.h
