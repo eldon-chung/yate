@@ -378,10 +378,10 @@ class TextPlane {
         // make this vector a fixed array to avoid allocations?
         render_text();
         render_cursor();
-        render_selection();
         if (model.has_parser()) {
             render_highlights();
         }
+        render_selection();
         render_line_numbers();
     }
 
@@ -534,7 +534,9 @@ class TextPlane {
         }
         {
             size_t ending_col = col_to_width(range_end.row, range_end.col);
-            apply_style(ending_visual_row, 0, 1, ending_col, highlight);
+            if (ending_col > 0) {
+                apply_style(ending_visual_row, 0, 1, ending_col, highlight);
+            }
         }
         {
             for (size_t row = starting_visual_row + 1; row < ending_visual_row;

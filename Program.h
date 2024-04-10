@@ -234,12 +234,13 @@ class PromptState : public ProgramState {
         } else {
             to_send += "null";
         }
-        event_queue_ptr->post_message(to_send);
 
         cmd_buf.clear();
         prompt_str.clear();
         cursor = 0;
         has_response = false;
+        view_ptr->render_cmd();
+        event_queue_ptr->post_message(to_send);
     }
 
     void register_keybinds() {
@@ -403,9 +404,9 @@ class FileSaverState : public ProgramState {
             }
             assert(file_ptr->has_filename());
             // returns true if a file was created in the process
+            substate = ASK_OVERWRITE;
             if (!file_ptr->try_open_or_create()) {
                 // file was not just created
-                substate = ASK_OVERWRITE;
                 prompt_state.setup("File exists, overwrite? [Y/n]:",
                                    "FileSaverState");
                 return StateReturn(&prompt_state);
@@ -571,7 +572,7 @@ class FileOpenerState : public ProgramState {
                 return StateReturn(StateReturn::Transition::EXIT);
             }
             substate = OPENING;
-            if (msg != "msg=N" && msg != "msg=n") {
+            if (msg != "str=N" && msg != "str=n") {
                 return StateReturn(new FileSaverState(file_ptr, text_buffer_ptr,
                                                       "FileOpenerState"));
             }

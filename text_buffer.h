@@ -854,10 +854,9 @@ struct TextBuffer {
     }
 };
 
-inline const char *read_text_buffer(void *payload,
-                                    [[maybe_unused]] uint32_t byte_offset,
-                                    TSPoint position, uint32_t *bytes_read) {
-    static size_t op_idx = 1;
+inline const char *read_text_buffer(void *payload, uint32_t byte_offset,
+                                    [[maybe_unused]] TSPoint position,
+                                    uint32_t *bytes_read) {
     TextBuffer *text_buffer_ptr = (TextBuffer *)payload;
 
     if (byte_offset == text_buffer_ptr->total_bytes()) {
@@ -881,8 +880,7 @@ inline const char *read_text_buffer(void *payload,
         text_buffer_ptr->starting_byte_offset.byte_offset_at_line(line_idx);
 
     assert(line_start_offset <= byte_offset);
-
-    size_t line_offset = byte_offset - line_start_offset;
+    size_t line_offset = (size_t)(byte_offset - line_start_offset);
     assert(line_offset <= text_buffer_ptr->at(line_idx).size());
 
     if (line_offset == text_buffer_ptr->at(line_idx).size()) {
@@ -894,9 +892,8 @@ inline const char *read_text_buffer(void *payload,
             return "\0";
         }
     } else {
-        *bytes_read = text_buffer_ptr->at(line_idx).size() - line_offset;
-        std::string_view debug =
-            text_buffer_ptr->at(line_idx).substr(line_offset);
+        *bytes_read =
+            (uint32_t)(text_buffer_ptr->at(line_idx).size() - line_offset);
         return text_buffer_ptr->at(line_idx).data() + line_offset;
     }
 }
