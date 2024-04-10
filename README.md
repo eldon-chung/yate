@@ -1,9 +1,44 @@
-Yet Another Text Editor
+# Yet Another Text Editor 
 
-TODO:
-* File Opening/Saving
-* Selection, Copy, Paste
+This is yet another text editor that I've been working on. 
+
+Comes flush with basic cut/copy/paste operations, file opening/saving, and syntax highlighting for C++ (powered by the [tree-sitter library](https://tree-sitter.github.io/tree-sitter/), and the [tree-sitter C++ parser](https://github.com/tree-sitter/tree-sitter-cpp)). 
+
+https://github.com/eldon-chung/yate/assets/18584068/5737ec73-5495-4fd6-8209-bde7973a908a
+
+I plan to include syntax highlighting for other languages (since they're already supported) when I come around to doing that.
+
+## Some keybinds:
+  * Quit: `ctrl + W` 
+  * Save: `ctrl + O` 
+  * Read: `ctrl + R` 
+  * Quit Prompt: `ctrl + Q` 
+  * Quit: `ctrl + W` 
+  * Cut: `ctrl + X`  
+  * Copy: `ctrl + C`  
+  * Paste: `ctrl + G` (`ctrl + V` has issues for now)  
+  * Parse: `ctrl + P` (invokes the C++ parser) 
+
+## To build the project:
+You'll need to have `make` and the `libtree-sitter` package installed. I'm using version 0.20.3-1 on Ubuntu for my builds. The `Makefile` should take care of the rest. 
+Run `make yate` (or just `make`) to build the executable as `yate`. There's also `make debug` which builds it with `-g` for running it with stuff like `gdb`.
+
+## Planned Features:
+* Lots and lots of nice cursor movement and basic editing keybinds are missing for now. Including
+  1. `ctrl + left/right` should move the cursor by word boundaries rather than single characters.
+    1b. `ctrl + shift + left/right` should do the same thing but with selections.
+  2. `ctrl + up/down` should scroll up or down by one line.
+  3. `ctrl + Enter` should add a newline to the current line, and move the cursor down to that line.
+  4. `ctrl + shift + Enter` should add a newline to the previous line, and move the cursor up to that line.
+  5. `alt + up/down` should swap the current line with the one above/below it.
+    
+* Keybinds for manipulating text like cutting/copying/pasting entire lines when the cursor is not in selection mode.
+
+* Search (both normal and regular expression) is missing. Will implement those soon. 
+* Undo/Redo
 * Multicursor
-* Search
-* Jump to Line
-* Command Palette
+* Multiple text panes
+* Configurable syntax highlighting and colour theming for the editor itself
+* Text editing over SSH
+* LSP support
+
