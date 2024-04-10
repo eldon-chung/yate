@@ -19,6 +19,9 @@ I plan to include syntax highlighting for other languages (since they're already
   * Paste: `ctrl + G` (`ctrl + V` has issues for now)  
   * Parse: `ctrl + P` (invokes the C++ parser) 
 
+## Code Structure Rough Overview
+You can find an exposition on roughly how the code is structured, and some details into each component here: [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## To build the project:
 You'll need to have `make` and the `libtree-sitter` package installed. I'm using version 0.20.3-1 on Ubuntu for my builds. The `Makefile` should take care of the rest. 
 Run `make yate` (or just `make`) to build the executable as `yate`. There's also `make debug` which builds it with `-g` for running it with stuff like `gdb`.
