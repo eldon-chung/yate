@@ -316,7 +316,7 @@ class PromptState : public ProgramState {
             return StateReturn(StateReturn::Transition::EXIT);
         }
 
-        if (nc_input.modifiers == NCKEY_MOD_CTRL && nc_input.id == 'C') {
+        if (nc_input.modifiers == NCKEY_MOD_CTRL && nc_input.id == 'Q') {
             // we'll have to reset the response
             has_response = false;
             return StateReturn(StateReturn::Transition::EXIT);
@@ -928,7 +928,11 @@ class TextState : public ProgramState {
         // File manipulators
         REGISTER_MODDED_KEY('O', NCKEY_MOD_CTRL, &TextState::CTRL_O_HANDLER);
         REGISTER_MODDED_KEY('R', NCKEY_MOD_CTRL, &TextState::CTRL_R_HANDLER);
-        REGISTER_MODDED_KEY('U', NCKEY_MOD_CTRL, &TextState::CTRL_U_HANLDER);
+
+        // Text Manipulators
+        REGISTER_MODDED_KEY('G', NCKEY_MOD_CTRL, &TextState::CTRL_V_HANLDER);
+        REGISTER_MODDED_KEY('X', NCKEY_MOD_CTRL, &TextState::CTRL_X_HANDLER);
+        REGISTER_MODDED_KEY('C', NCKEY_MOD_CTRL, &TextState::CTRL_C_HANDLER);
     }
 
   private:
@@ -1034,6 +1038,7 @@ class TextState : public ProgramState {
     }
 
     // Clipboard manip
+    // Copy
     StateReturn CTRL_C_HANDLER() {
         if (maybe_anchor_point) {
             auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
@@ -1044,14 +1049,21 @@ class TextState : public ProgramState {
         return StateReturn();
     }
 
+    // Cut
     StateReturn CTRL_X_HANDLER() {
         if (maybe_anchor_point) {
             auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
             clipboard = text_buffer.get_lines(lp, rp);
+
+            // we need to get the lines before it's too late
+            size_t old_end_offset = text_buffer.get_offset_from_point(rp);
+
             text_buffer.remove_text_at(lp, rp);
             text_cursor = lp;
             maybe_anchor_point.reset();
             text_plane_ptr->chase_point(lp);
+            reparse_text(lp, rp, lp, text_buffer.get_offset_from_point(lp),
+                         old_end_offset, text_buffer.get_offset_from_point(lp));
         } else {
             // for now do nothing
         }
@@ -1059,32 +1071,23 @@ class TextState : public ProgramState {
         // quit selection mode
     }
 
-    StateReturn CTRL_V_HANDLER() {
-        if (clipboard.empty()) {
-            return StateReturn();
-        }
-
-        if (maybe_anchor_point) {
-            auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
-            text_buffer.remove_text_at(lp, rp);
-            text_cursor = lp;
-            text_plane_ptr->chase_point(text_cursor);
-        }
-        text_cursor = text_buffer.insert_text_at(text_cursor, clipboard);
-        maybe_anchor_point.reset();
-        text_plane_ptr->chase_point(text_cursor);
-
-        return StateReturn();
-    }
-
     // Paste
-    StateReturn CTRL_U_HANLDER() {
+    StateReturn CTRL_V_HANLDER() {
         if (clipboard.empty()) {
             return StateReturn();
         }
 
+        auto old_left = text_cursor;
+        auto old_right = text_cursor;
+        auto old_end_byte_offset = text_buffer.get_offset_from_point(old_right);
+
         if (maybe_anchor_point) {
             auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
+
+            old_left = lp;
+            old_right = rp;
+            old_end_byte_offset = text_buffer.get_offset_from_point(old_right);
+
             text_buffer.remove_text_at(lp, rp);
             text_cursor = lp;
             text_plane_ptr->chase_point(text_cursor);
@@ -1092,6 +1095,12 @@ class TextState : public ProgramState {
         text_cursor = text_buffer.insert_text_at(text_cursor, clipboard);
         maybe_anchor_point.reset();
         text_plane_ptr->chase_point(text_cursor);
+        auto new_right = text_cursor;
+
+        reparse_text(old_left, old_right, new_right,
+                     text_buffer.get_offset_from_point(old_left),
+                     old_end_byte_offset,
+                     text_buffer.get_offset_from_point(new_right));
 
         return StateReturn();
     }

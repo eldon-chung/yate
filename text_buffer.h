@@ -817,17 +817,24 @@ struct TextBuffer {
         std::string right_half = buffer.at(point.row).substr(point.col);
         buffer.at(point.row).resize(point.col); // retains the old string
 
-        lines.back().append(right_half);
+        lines.back().append(std::move(right_half));
         buffer.at(point.row).append(lines.front());
         // middle stuff
         buffer.insert(buffer.begin() + (ssize_t)point.row + 1,
                       lines.begin() + 1, lines.end());
 
-        for (size_t to_update = point.row;
-             to_update <= final_insertion_point.row; ++to_update) {
-            starting_byte_offset.set_position_size(to_update,
-                                                   actual_line_size(to_update));
+        starting_byte_offset.update_position_value(point.row,
+                                                   actual_line_size(point.row));
+        for (size_t to_update = point.row + 1;
+             to_update < final_insertion_point.row; ++to_update) {
+            // oh this should be an insertion
+            starting_byte_offset.insert_before_position(
+                to_update, actual_line_size(to_update));
         }
+        starting_byte_offset.insert_before_position(
+            final_insertion_point.row,
+            actual_line_size(final_insertion_point.row));
+
         return final_insertion_point;
     }
 
