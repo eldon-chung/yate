@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <signal.h>
 
 #include <assert.h>
@@ -922,6 +923,16 @@ class TextState : public ProgramState {
         REGISTER_MODDED_KEY(NCKEY_UP, NCKEY_MOD_SHIFT,
                             &TextState::SHIFT_UP_ARROW_HANDLER);
 
+        // Ctrl Left/Right
+        REGISTER_MODDED_KEY(NCKEY_LEFT, NCKEY_MOD_CTRL,
+                            &TextState::CTRL_LEFT_ARROW_HANDLER);
+        REGISTER_MODDED_KEY(NCKEY_RIGHT, NCKEY_MOD_CTRL,
+                            &TextState::CTRL_RIGHT_ARROW_HANDLER);
+        REGISTER_MODDED_KEY(NCKEY_LEFT, NCKEY_MOD_CTRL | NCKEY_MOD_SHIFT,
+                            &TextState::CTRL_SHIFT_LEFT_ARROW_HANDLER);
+        REGISTER_MODDED_KEY(NCKEY_RIGHT, NCKEY_MOD_CTRL | NCKEY_MOD_SHIFT,
+                            &TextState::CTRL_SHIFT_RIGHT_ARROW_HANDLER);
+
         // Ctrl P
         REGISTER_MODDED_KEY('P', NCKEY_MOD_CTRL, &TextState::CTRL_P_HANDLER);
 
@@ -1034,6 +1045,56 @@ class TextState : public ProgramState {
         if (*maybe_anchor_point == text_cursor) {
             maybe_anchor_point.reset();
         }
+        return StateReturn();
+    }
+
+    // Word Boundary movement
+    StateReturn CTRL_LEFT_ARROW_HANDLER() {
+
+        maybe_anchor_point.reset();
+        text_cursor = move_cursor_left_over_boundary(text_cursor);
+
+        return StateReturn();
+    }
+
+    StateReturn CTRL_RIGHT_ARROW_HANDLER() {
+        maybe_anchor_point.reset();
+        text_cursor = move_cursor_right_over_boundary(text_cursor);
+
+        return StateReturn();
+    }
+
+    StateReturn CTRL_SHIFT_LEFT_ARROW_HANDLER() {
+
+        if (!maybe_anchor_point) {
+            maybe_anchor_point = text_cursor;
+        }
+
+        text_cursor = move_cursor_left_over_boundary(text_cursor);
+        text_plane_ptr->chase_point(text_cursor);
+
+        assert(maybe_anchor_point);
+        if (*maybe_anchor_point == text_cursor) {
+            maybe_anchor_point.reset();
+        }
+
+        return StateReturn();
+    }
+
+    StateReturn CTRL_SHIFT_RIGHT_ARROW_HANDLER() {
+
+        if (!maybe_anchor_point) {
+            maybe_anchor_point = text_cursor;
+        }
+
+        text_cursor = move_cursor_right_over_boundary(text_cursor);
+        text_plane_ptr->chase_point(text_cursor);
+
+        assert(maybe_anchor_point);
+        if (*maybe_anchor_point == text_cursor) {
+            maybe_anchor_point.reset();
+        }
+
         return StateReturn();
     }
 
@@ -1238,6 +1299,60 @@ class TextState : public ProgramState {
         return to_return;
     }
 
+    Cursor move_cursor_right_over_boundary(Cursor const &p) const {
+        // eventually this needs to be semantic
+        // (based on tree-sitter cursor or something)
+        // for now we'll do a basic one
+        Cursor cursor_to_return = p;
+        CharType type_to_skip;
+        if (cursor_to_return.col ==
+                text_buffer.at(cursor_to_return.row).size() &&
+            cursor_to_return.row + 1 < text_buffer.num_lines()) {
+            // moves it up one row and to the last char of that row
+            cursor_to_return = move_cursor_right(cursor_to_return);
+            type_to_skip = char_type(text_buffer[cursor_to_return]);
+        } else {
+            type_to_skip = char_type(text_buffer[cursor_to_return]);
+        }
+
+        // cursor_to_return = move_cursor_right(cursor_to_return);
+
+        while (cursor_to_return.col <
+                   text_buffer.at(cursor_to_return.row).size() &&
+               char_type(text_buffer[cursor_to_return]) == type_to_skip) {
+            cursor_to_return = move_cursor_right(cursor_to_return);
+        }
+
+        return cursor_to_return;
+    }
+
+    Cursor move_cursor_left_over_boundary(Cursor const &p) const {
+        // eventually this needs to be semantic
+        // (based on tree-sitter cursor or something)
+        // for now we'll do a basic one
+
+        Cursor cursor_to_return = p;
+        CharType type_to_skip;
+        if (cursor_to_return.col == 0 && cursor_to_return.row > 0) {
+            // moves it up one row and to the last char of that row
+            cursor_to_return = move_cursor_left(cursor_to_return);
+            type_to_skip = char_type('\n');
+        } else {
+            cursor_to_return = move_cursor_left(cursor_to_return);
+            type_to_skip = char_type(text_buffer[cursor_to_return]);
+        }
+
+        while (cursor_to_return.col > 0) {
+            Cursor lookbehind = move_cursor_left(cursor_to_return);
+            if (char_type(text_buffer[lookbehind]) != type_to_skip) {
+                break;
+            }
+            cursor_to_return = lookbehind;
+        }
+
+        return cursor_to_return;
+    }
+
     // call this to update the parser
     void reparse_text(Cursor start_point, Cursor old_end_point,
                       Cursor new_end_point, size_t start_byte,
@@ -1250,6 +1365,27 @@ class TextState : public ProgramState {
         // TODO: get the update infomation here
         maybe_parser->update(start_point, old_end_point, new_end_point,
                              start_byte, old_end_byte, new_end_byte);
+    }
+
+  private:
+    // some helper functions:
+
+    enum class CharType {
+        ALPHA_NUMERIC_UNDERSCORE,
+        WHITESPACE,
+        OTHER,
+    };
+
+    static CharType char_type(char ch) {
+        if (std::isspace(ch)) {
+            return CharType::WHITESPACE;
+        }
+
+        if (std::isalpha(ch) || std::isdigit(ch) || ch == '_') {
+            return CharType::ALPHA_NUMERIC_UNDERSCORE;
+        }
+
+        return CharType::OTHER;
     }
 };
 

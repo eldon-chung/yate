@@ -30,7 +30,7 @@ You'll also need the [`notcurses`](https://github.com/dankamongmen/notcurses) pa
 
 ## Planned Features:
 * Lots and lots of nice cursor movement and basic editing keybinds are missing for now. Including
-  1. `ctrl + left/right` should move the cursor by word boundaries rather than single characters.
+  1. ~~`ctrl + left/right` should move the cursor by word boundaries rather than single characters.~~ Done!
     1b. `ctrl + shift + left/right` should do the same thing but with selections.
   2. `ctrl + up/down` should scroll up or down by one line.
   3. `ctrl + Enter` should add a newline to the current line, and move the cursor down to that line.
