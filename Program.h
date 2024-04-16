@@ -1130,6 +1130,7 @@ class TextState : public ProgramState {
                 text_cursor.row + 1,
                 text_buffer.at(text_cursor.row + 1).size());
         }
+        text_plane_ptr->chase_point(text_cursor);
         return StateReturn();
     }
 
@@ -1158,7 +1159,7 @@ class TextState : public ProgramState {
                 text_cursor.row - 1,
                 text_buffer.at(text_cursor.row - 1).size());
         }
-
+        text_plane_ptr->chase_point(text_cursor);
         return StateReturn();
     }
 
