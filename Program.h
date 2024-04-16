@@ -824,7 +824,6 @@ class TextState : public ProgramState {
 
     void register_keybinds() {
         // Arrow key handlers
-
         REGISTER_KEY(NCKEY_LEFT, &TextState::LEFT_ARROW_HANDLER);
         REGISTER_KEY(NCKEY_RIGHT, &TextState::RIGHT_ARROW_HANDLER);
         REGISTER_KEY(NCKEY_DOWN, &TextState::DOWN_ARROW_HANDLER);
@@ -867,6 +866,12 @@ class TextState : public ProgramState {
                             &TextState::CTRL_BACKSPACE_HANDLER);
         REGISTER_MODDED_KEY(NCKEY_DEL, NCKEY_MOD_CTRL,
                             &TextState::CTRL_DELETE_HANDLER);
+
+        // Ctrl Enter
+        REGISTER_MODDED_KEY(NCKEY_ENTER, NCKEY_MOD_CTRL,
+                            &TextState::CTRL_ENTER_HANDLER);
+        REGISTER_MODDED_KEY(NCKEY_ENTER, NCKEY_MOD_CTRL | NCKEY_MOD_SHIFT,
+                            &TextState::CTRL_SHIFT_ENTER_HANDLER);
 
         // Ctrl P
         REGISTER_MODDED_KEY('P', NCKEY_MOD_CTRL, &TextState::CTRL_P_HANDLER);
@@ -1210,6 +1215,34 @@ class TextState : public ProgramState {
             maybe_anchor_point.reset();
         }
 
+        return StateReturn();
+    }
+
+    StateReturn CTRL_ENTER_HANDLER() {
+
+        if (maybe_anchor_point) {
+            maybe_anchor_point.reset();
+        }
+
+        // insert newline the end of current position
+        Cursor end_of_line = {text_cursor.row,
+                              text_buffer.at(text_cursor.row).size(),
+                              StringUtils::var_width_str_into_effective_width(
+                                  text_buffer.at(text_cursor.row))};
+        text_buffer.insert_newline_at(end_of_line);
+        text_cursor = Cursor{text_cursor.row + 1, 0, 0};
+        return StateReturn();
+    }
+
+    StateReturn CTRL_SHIFT_ENTER_HANDLER() {
+
+        if (maybe_anchor_point) {
+            maybe_anchor_point.reset();
+        }
+
+        // insert newline the end of current position
+        Cursor begin_of_line = {text_cursor.row, 0, 0};
+        text_buffer.insert_newline_at(begin_of_line);
         return StateReturn();
     }
 
