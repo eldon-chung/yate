@@ -32,7 +32,7 @@ You'll also need the [`notcurses`](https://github.com/dankamongmen/notcurses) pa
 * Lots and lots of nice cursor movement and basic editing keybinds are missing for now. Including
   1. ~~`ctrl + left/right` should move the cursor by word boundaries rather than single characters.~~ Done!
      1. ~~`ctrl + shift + left/right` should do the same thing but with selections.~~ Also done!
-  3. `ctrl + up/down` should scroll up or down by one line.
+  3. ~~`ctrl + up/down` should scroll up or down by one line.~~ Done!
   4. `ctrl + Enter` should add a newline to the current line, and move the cursor down to that line.
   5. `ctrl + shift + Enter` should add a newline to the previous line, and move the cursor up to that line.
   6. ~~`alt + up/down` should swap the current line with the one above/below it.~~ Done!
