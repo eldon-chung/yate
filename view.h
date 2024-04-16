@@ -729,8 +729,10 @@ class TextPlane {
         return get_yx_dim(text_plane.get());
     }
 
-  private:
     void visual_scroll_up() {
+        if (tl_corner.row == 0) {
+            return;
+        }
         auto [num_rows, num_cols] = get_yx_dim(text_plane.get());
         if (wrap_status == WrapStatus::WRAP) {
             if (tl_corner.col == 0) {
@@ -754,6 +756,9 @@ class TextPlane {
     }
 
     void visual_scroll_down() {
+        if (tl_corner.row == model.num_lines() - 1) {
+            return;
+        }
         auto [num_rows, num_cols] = get_yx_dim(text_plane.get());
         if (wrap_status == WrapStatus::WRAP) {
             if (tl_corner.col + num_cols > model.at(tl_corner.row).size()) {

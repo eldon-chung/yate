@@ -850,6 +850,12 @@ class TextState : public ProgramState {
         REGISTER_MODDED_KEY(NCKEY_RIGHT, NCKEY_MOD_CTRL | NCKEY_MOD_SHIFT,
                             &TextState::CTRL_SHIFT_RIGHT_ARROW_HANDLER);
 
+        // Ctrl Up/Down
+        REGISTER_MODDED_KEY(NCKEY_UP, NCKEY_MOD_CTRL,
+                            &TextState::CTRL_UP_HANDLER);
+        REGISTER_MODDED_KEY(NCKEY_DOWN, NCKEY_MOD_CTRL,
+                            &TextState::CTRL_DOWN_HANDLER);
+
         // Alt Up/down
         REGISTER_MODDED_KEY(NCKEY_UP, NCKEY_MOD_ALT,
                             &TextState::ALT_UP_HANDLER);
@@ -990,6 +996,16 @@ class TextState : public ProgramState {
         maybe_anchor_point.reset();
         text_cursor = move_cursor_right_over_boundary(text_cursor);
 
+        return StateReturn();
+    }
+
+    StateReturn CTRL_UP_HANDLER() {
+        text_plane_ptr->visual_scroll_up();
+        return StateReturn();
+    }
+
+    StateReturn CTRL_DOWN_HANDLER() {
+        text_plane_ptr->visual_scroll_down();
         return StateReturn();
     }
 
