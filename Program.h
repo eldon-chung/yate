@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <notcurses/nckeys.h>
 #include <signal.h>
 
 #include <assert.h>
@@ -768,50 +769,7 @@ class TextState : public ProgramState {
 
         // TODO: handle all the other modifiers for these cases
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_BACKSPACE) {
-            if (maybe_anchor_point) {
-                auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
-
-                Cursor update_start_point = lp;
-                Cursor update_old_end_point = rp;
-                size_t start_byte = text_buffer.get_offset_from_point(lp);
-                size_t old_end_byte = text_buffer.get_offset_from_point(rp);
-
-                text_buffer.remove_text_at(lp, rp);
-                text_cursor = lp;
-
-                Cursor update_new_end_point = text_cursor;
-                size_t new_end_byte =
-                    text_buffer.get_offset_from_point(update_new_end_point);
-
-                maybe_anchor_point.reset();
-
-                reparse_text(update_start_point, update_old_end_point,
-                             update_new_end_point, start_byte, old_end_byte,
-                             new_end_byte);
-            } else {
-                Cursor old_pos = text_cursor;
-
-                Cursor update_old_end_point = text_cursor;
-                size_t old_end_byte =
-                    text_buffer.get_offset_from_point(update_old_end_point);
-
-                LEFT_ARROW_HANDLER();
-                Cursor update_start_point = text_cursor;
-                Cursor update_new_end_point = text_cursor;
-
-                size_t start_byte =
-                    text_buffer.get_offset_from_point(update_start_point);
-                size_t new_end_byte =
-                    text_buffer.get_offset_from_point(update_new_end_point);
-
-                text_buffer.insert_backspace_at(old_pos);
-
-                reparse_text(update_start_point, update_old_end_point,
-                             update_new_end_point, start_byte, old_end_byte,
-                             new_end_byte);
-            }
-            text_plane_ptr->chase_point(text_cursor);
-            return StateReturn();
+            return BACKSPACE_HANDLER();
         }
 
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_ENTER) {
@@ -857,48 +815,7 @@ class TextState : public ProgramState {
         }
 
         if (nc_input.modifiers == 0 && nc_input.id == NCKEY_DEL) {
-            if (maybe_anchor_point) {
-                auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
-
-                Cursor update_start_point = lp;
-                Cursor update_old_end_point = rp;
-
-                size_t start_byte =
-                    text_buffer.get_offset_from_point(update_start_point);
-                size_t old_end_byte =
-                    text_buffer.get_offset_from_point(update_old_end_point);
-
-                text_buffer.remove_text_at(lp, rp);
-                text_cursor = lp;
-                maybe_anchor_point.reset();
-
-                Cursor update_new_end_point = lp;
-                size_t new_end_byte =
-                    text_buffer.get_offset_from_point(update_new_end_point);
-
-                reparse_text(update_start_point, update_old_end_point,
-                             update_new_end_point, start_byte, old_end_byte,
-                             new_end_byte);
-            } else {
-                Cursor update_start_point = text_cursor;
-                Cursor update_old_end_point =
-                    move_cursor_right(update_start_point);
-
-                size_t start_byte =
-                    text_buffer.get_offset_from_point(update_start_point);
-
-                size_t old_end_byte =
-                    text_buffer.get_offset_from_point(update_old_end_point);
-
-                text_buffer.insert_delete_at(text_cursor);
-
-                reparse_text(update_start_point, update_old_end_point,
-                             update_start_point, start_byte, old_end_byte,
-                             start_byte);
-            }
-
-            text_plane_ptr->chase_point(text_cursor);
-            return StateReturn();
+            return DELETE_HANDLER();
         }
 
         // need to change the keybinds_table type
@@ -932,6 +849,18 @@ class TextState : public ProgramState {
                             &TextState::CTRL_SHIFT_LEFT_ARROW_HANDLER);
         REGISTER_MODDED_KEY(NCKEY_RIGHT, NCKEY_MOD_CTRL | NCKEY_MOD_SHIFT,
                             &TextState::CTRL_SHIFT_RIGHT_ARROW_HANDLER);
+
+        // Alt Up/down
+        REGISTER_MODDED_KEY(NCKEY_UP, NCKEY_MOD_ALT,
+                            &TextState::ALT_UP_HANDLER);
+        REGISTER_MODDED_KEY(NCKEY_DOWN, NCKEY_MOD_ALT,
+                            &TextState::ALT_DOWN_HANDLER);
+
+        // Ctrl Del/Backspace
+        REGISTER_MODDED_KEY(NCKEY_BACKSPACE, NCKEY_MOD_CTRL,
+                            &TextState::CTRL_BACKSPACE_HANDLER);
+        REGISTER_MODDED_KEY(NCKEY_DEL, NCKEY_MOD_CTRL,
+                            &TextState::CTRL_DELETE_HANDLER);
 
         // Ctrl P
         REGISTER_MODDED_KEY('P', NCKEY_MOD_CTRL, &TextState::CTRL_P_HANDLER);
@@ -1060,6 +989,175 @@ class TextState : public ProgramState {
     StateReturn CTRL_RIGHT_ARROW_HANDLER() {
         maybe_anchor_point.reset();
         text_cursor = move_cursor_right_over_boundary(text_cursor);
+
+        return StateReturn();
+    }
+
+    StateReturn BACKSPACE_HANDLER() {
+        if (maybe_anchor_point) {
+            auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
+
+            Cursor update_start_point = lp;
+            Cursor update_old_end_point = rp;
+            size_t start_byte = text_buffer.get_offset_from_point(lp);
+            size_t old_end_byte = text_buffer.get_offset_from_point(rp);
+
+            text_buffer.remove_text_at(lp, rp);
+            text_cursor = lp;
+
+            Cursor update_new_end_point = text_cursor;
+            size_t new_end_byte =
+                text_buffer.get_offset_from_point(update_new_end_point);
+
+            maybe_anchor_point.reset();
+
+            reparse_text(update_start_point, update_old_end_point,
+                         update_new_end_point, start_byte, old_end_byte,
+                         new_end_byte);
+        } else {
+            Cursor old_pos = text_cursor;
+
+            Cursor update_old_end_point = text_cursor;
+            size_t old_end_byte =
+                text_buffer.get_offset_from_point(update_old_end_point);
+
+            LEFT_ARROW_HANDLER();
+            Cursor update_start_point = text_cursor;
+            Cursor update_new_end_point = text_cursor;
+
+            size_t start_byte =
+                text_buffer.get_offset_from_point(update_start_point);
+            size_t new_end_byte =
+                text_buffer.get_offset_from_point(update_new_end_point);
+
+            text_buffer.insert_backspace_at(old_pos);
+
+            reparse_text(update_start_point, update_old_end_point,
+                         update_new_end_point, start_byte, old_end_byte,
+                         new_end_byte);
+        }
+        text_plane_ptr->chase_point(text_cursor);
+        return StateReturn();
+    }
+
+    StateReturn DELETE_HANDLER() {
+        if (maybe_anchor_point) {
+            auto [lp, rp] = std::minmax(*maybe_anchor_point, text_cursor);
+
+            Cursor update_start_point = lp;
+            Cursor update_old_end_point = rp;
+
+            size_t start_byte =
+                text_buffer.get_offset_from_point(update_start_point);
+            size_t old_end_byte =
+                text_buffer.get_offset_from_point(update_old_end_point);
+
+            text_buffer.remove_text_at(lp, rp);
+            text_cursor = lp;
+            maybe_anchor_point.reset();
+
+            Cursor update_new_end_point = lp;
+            size_t new_end_byte =
+                text_buffer.get_offset_from_point(update_new_end_point);
+
+            reparse_text(update_start_point, update_old_end_point,
+                         update_new_end_point, start_byte, old_end_byte,
+                         new_end_byte);
+        } else {
+            Cursor update_start_point = text_cursor;
+            Cursor update_old_end_point = move_cursor_right(update_start_point);
+
+            size_t start_byte =
+                text_buffer.get_offset_from_point(update_start_point);
+
+            size_t old_end_byte =
+                text_buffer.get_offset_from_point(update_old_end_point);
+
+            text_buffer.insert_delete_at(text_cursor);
+
+            reparse_text(update_start_point, update_old_end_point,
+                         update_start_point, start_byte, old_end_byte,
+                         start_byte);
+        }
+
+        text_plane_ptr->chase_point(text_cursor);
+        return StateReturn();
+    }
+
+    StateReturn CTRL_DELETE_HANDLER() {
+        // this needs to be handled like a delete
+        if (maybe_anchor_point) {
+            return DELETE_HANDLER();
+        }
+
+        maybe_anchor_point = move_cursor_right_over_boundary(text_cursor);
+        return DELETE_HANDLER();
+    }
+
+    StateReturn CTRL_BACKSPACE_HANDLER() {
+        if (maybe_anchor_point) {
+            return BACKSPACE_HANDLER();
+        }
+
+        maybe_anchor_point = move_cursor_left_over_boundary(text_cursor);
+        return BACKSPACE_HANDLER();
+    }
+
+    StateReturn ALT_UP_HANDLER() {
+        if (maybe_anchor_point) {
+            auto [upper_row, lower_row] =
+                std::minmax(maybe_anchor_point->row, text_cursor.row);
+            if (upper_row > 0) {
+                text_buffer.shift_lines_up(upper_row, lower_row + 1);
+                --text_cursor.row;
+                --maybe_anchor_point->row;
+
+                for (size_t row = upper_row; row <= lower_row; ++row) {
+                    text_buffer.starting_byte_offset.update_position_value(
+                        row, text_buffer.at(row).size());
+                }
+            }
+
+        } else if (text_cursor.row > 0) {
+
+            text_buffer.shift_lines_up(text_cursor.row, text_cursor.row + 1);
+            --text_cursor.row;
+
+            text_buffer.starting_byte_offset.update_position_value(
+                text_cursor.row, text_buffer.at(text_cursor.row).size());
+
+            text_buffer.starting_byte_offset.update_position_value(
+                text_cursor.row + 1,
+                text_buffer.at(text_cursor.row + 1).size());
+        }
+        return StateReturn();
+    }
+
+    StateReturn ALT_DOWN_HANDLER() {
+        if (maybe_anchor_point) {
+            auto [upper_row, lower_row] =
+                std::minmax(maybe_anchor_point->row, text_cursor.row);
+            if (lower_row < text_buffer.num_lines() - 1) {
+                text_buffer.shift_lines_down(upper_row, lower_row + 1);
+                ++text_cursor.row;
+                ++maybe_anchor_point->row;
+
+                for (size_t row = upper_row - 1; row < lower_row; ++row) {
+                    text_buffer.starting_byte_offset.update_position_value(
+                        row, text_buffer.at(row).size());
+                }
+            }
+
+        } else if (text_cursor.row < text_buffer.num_lines() - 1) {
+            text_buffer.shift_lines_down(text_cursor.row, text_cursor.row + 1);
+            ++text_cursor.row;
+            text_buffer.starting_byte_offset.update_position_value(
+                text_cursor.row, text_buffer.at(text_cursor.row).size());
+
+            text_buffer.starting_byte_offset.update_position_value(
+                text_cursor.row - 1,
+                text_buffer.at(text_cursor.row - 1).size());
+        }
 
         return StateReturn();
     }

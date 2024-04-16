@@ -859,6 +859,31 @@ struct TextBuffer {
     char operator[](Cursor cursor) const {
         return buffer.at(cursor.row)[cursor.col];
     }
+
+    void shift_lines_up(size_t start, size_t end) {
+        assert(start > 0);
+
+        if (start + 1 == end) {
+            std::swap(buffer[start], buffer[start - 1]);
+            return;
+        }
+
+        buffer.insert(buffer.begin() + end, std::move(buffer[start - 1]));
+        buffer.erase(buffer.begin() + start - 1);
+    }
+
+    void shift_lines_down(size_t start, size_t end) {
+        assert(end < buffer.size());
+
+        if (start + 1 == end) {
+            std::swap(buffer[start], buffer[end]);
+            return;
+        }
+
+        std::string temp = std::move(buffer[end]);
+        buffer.insert(buffer.begin() + start, std::move(temp));
+        buffer.erase(buffer.begin() + end + 1);
+    }
 };
 
 inline const char *read_text_buffer(void *payload, uint32_t byte_offset,

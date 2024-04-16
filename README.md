@@ -35,7 +35,7 @@ You'll also need the [`notcurses`](https://github.com/dankamongmen/notcurses) pa
   3. `ctrl + up/down` should scroll up or down by one line.
   4. `ctrl + Enter` should add a newline to the current line, and move the cursor down to that line.
   5. `ctrl + shift + Enter` should add a newline to the previous line, and move the cursor up to that line.
-  6. `alt + up/down` should swap the current line with the one above/below it.
+  6. ~~`alt + up/down` should swap the current line with the one above/below it.~~ Done!
     
 * Keybinds for manipulating text like cutting/copying/pasting entire lines when the cursor is not in selection mode.
 
